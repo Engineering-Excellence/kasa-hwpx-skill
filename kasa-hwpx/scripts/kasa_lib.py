@@ -40,13 +40,27 @@ TBL_HEAD  = {"bf": "11", "pp": "14", "cp": "17"}   # 머리행 12pt bold, 음영
 TBL_LABEL = {"bf": "3",  "pp": "14", "cp": "17"}   # 데이터행 첫 칸(구분) 12pt bold
 TBL_DATA  = {"bf": "3",  "pp": "17", "cp": "31"}   # 데이터 셀 12pt
 
-# 참고/붙임
-APX_LABEL = {"cp": "15", "pp": "12"}   # "참고 N"
-APX_TITLE = {"cp": "63", "pp": "3"}    # 참고 제목 16pt
+# 참고/붙임 — 머리 디자인(좌측 남색 박스 + 굵은 밑줄 제목칸 3칸 표)
+#   표준양식 검증 ID로만 구성:
+#   - 박스칸  : borderFill 16(남색 #00294B 채움) + charPr 2 (흰색 16pt HY헤드라인M) + paraPr 11(가운데)
+#   - 간격칸  : borderFill 1 (무테·무채움)
+#   - 제목칸  : borderFill 17(하단 0.5mm 굵은 밑줄) + charPr 63(검정 16pt HY헤드라인M) + paraPr 3
+APX_HDR = {
+    "total_w": 48159,
+    "box_w": 5968,  "gap_w": 565,  "title_w": 41626,  "row_h": 2831,
+    "box_bf": "16", "box_cp": "2",  "box_pp": "11",
+    "gap_bf": "1",  "gap_cp": "7",  "gap_pp": "3",
+    "ttl_bf": "17", "ttl_cp": "63", "ttl_pp": "3",
+}
 
-_LINESEG = ('<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="{h}" '
-            'textheight="{h}" baseline="{b}" spacing="600" horzpos="0" '
-            'horzsize="{w}" flags="393216"/></hp:linesegarray>')
+# [중요] 본문 흐름 문단에는 linesegarray(줄 위치 캐시)를 넣지 않는다.
+#   원본 양식의 본문 lineseg는 vertpos가 '문단 단위 상대값'이 아니라 텍스트영역
+#   기준 '누적 절대값'(예: 8383 → 15583 …)이다. 모든 문단에 vertpos="0"을 박으면
+#   한글이 그 캐시를 신뢰해 전 문단을 같은 높이(맨 위)에 겹쳐 그린다.
+#   캐시를 비워 두면 한글이 문서를 열 때 줄 위치를 스스로 재계산(relayout)하므로
+#   긴 문장의 자동 줄바꿈까지 정확히 배치된다. (한글이 재저장하면 올바른 vertpos를
+#   생성하는 것으로 검증됨)
+_LINESEG = ""  # 흐름 문단/표 래퍼/셀 모두 캐시 없이 생성 → 한글이 재계산
 
 # ──────────────────────────────────────────────────────────────────────────
 # 유틸
@@ -97,11 +111,10 @@ def write_package(path, parts, order):
 # 본문 문단/표 빌더
 # ──────────────────────────────────────────────────────────────────────────
 def make_para(text, cp, pp=BODY_PARAPR, h=1500, w=48188, page_break="0"):
-    seg = _LINESEG.format(h=h, b=int(h * 0.85), w=w)
     return (f'<hp:p id="{next_id()}" paraPrIDRef="{pp}" styleIDRef="0" '
             f'pageBreak="{page_break}" columnBreak="0" merged="0">'
             f'<hp:run charPrIDRef="{cp}"><hp:t>{xml_escape(text)}</hp:t></hp:run>'
-            f'{seg}</hp:p>')
+            f'{_LINESEG}</hp:p>')
 
 def make_body_line(level, text, page_break="0"):
     if level not in BODY_LEVELS:
@@ -118,7 +131,7 @@ def _cell(text, col, row, colspan, style, w, h=282, header="0"):
     inner = (f'<hp:p id="{nid}" paraPrIDRef="{style["pp"]}" styleIDRef="0" '
              f'pageBreak="0" columnBreak="0" merged="0">'
              f'<hp:run charPrIDRef="{style["cp"]}"><hp:t>{xml_escape(text)}</hp:t></hp:run>'
-             + _LINESEG.format(h=1200, b=1020, w=max(w - 1000, 1000)) + '</hp:p>')
+             + _LINESEG + '</hp:p>')
     return (f'<hp:tc name="" header="{header}" hasMargin="0" protect="0" editable="0" '
             f'dirty="0" borderFillIDRef="{style["bf"]}">'
             f'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" '
@@ -168,10 +181,53 @@ def make_table(headers, rows, title=None):
            f'<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
            f'<hp:inMargin left="510" right="510" top="141" bottom="141"/>'
            + "".join(trs) + '</hp:tbl>')
-    seg = _LINESEG.format(h=rowcnt*600, b=0, w=TBL_TOTAL_W)
     return (f'<hp:p id="{next_id()}" paraPrIDRef="12" styleIDRef="0" pageBreak="0" '
             f'columnBreak="0" merged="0"><hp:run charPrIDRef="15">{tbl}<hp:t/></hp:run>'
-            f'{seg}</hp:p>')
+            f'{_LINESEG}</hp:p>')
+
+def _apx_cell(text, col, bf, cp, pp, w, h):
+    """참고 머리 표의 단일 셀(캐시 없는 단일 문단 포함)."""
+    inner = (f'<hp:p id="{next_id()}" paraPrIDRef="{pp}" styleIDRef="0" '
+             f'pageBreak="0" columnBreak="0" merged="0">'
+             f'<hp:run charPrIDRef="{cp}"><hp:t>{xml_escape(text)}</hp:t></hp:run>'
+             f'{_LINESEG}</hp:p>')
+    return (f'<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" '
+            f'dirty="0" borderFillIDRef="{bf}">'
+            f'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" '
+            f'vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" '
+            f'textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">{inner}</hp:subList>'
+            f'<hp:cellAddr colAddr="{col}" rowAddr="0"/>'
+            f'<hp:cellSpan colSpan="1" rowSpan="1"/>'
+            f'<hp:cellSz width="{w}" height="{h}"/>'
+            f'<hp:cellMargin left="141" right="141" top="141" bottom="141"/></hp:tc>')
+
+def make_appendix_header(label, heading, page_break="1"):
+    """참고 머리: [남색 '참고' 박스] [간격] [굵은 밑줄 제목] 3칸 표.
+    label   : 박스 텍스트(예: '참고', '참고 1')
+    heading : 제목 텍스트(앞에 한 칸 들여 표시)
+    """
+    A = APX_HDR
+    cells = (
+        _apx_cell(label, 0, A["box_bf"], A["box_cp"], A["box_pp"], A["box_w"], A["row_h"])
+        + _apx_cell("", 1, A["gap_bf"], A["gap_cp"], A["gap_pp"], A["gap_w"], A["row_h"])
+        + _apx_cell(" " + (heading or ""), 2, A["ttl_bf"], A["ttl_cp"], A["ttl_pp"],
+                    A["title_w"], A["row_h"])
+    )
+    tbl = (f'<hp:tbl id="{random.randint(10**8, 2*10**9)}" zOrder="0" numberingType="TABLE" '
+           f'textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
+           f'pageBreak="CELL" repeatHeader="1" rowCnt="1" colCnt="3" '
+           f'cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
+           f'<hp:sz width="{A["total_w"]}" widthRelTo="ABSOLUTE" height="{A["row_h"]}" '
+           f'heightRelTo="ABSOLUTE" protect="0"/>'
+           f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+           f'holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" '
+           f'horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+           f'<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
+           f'<hp:inMargin left="141" right="141" top="141" bottom="141"/>'
+           f'<hp:tr>{cells}</hp:tr></hp:tbl>')
+    return (f'<hp:p id="{next_id()}" paraPrIDRef="12" styleIDRef="0" pageBreak="{page_break}" '
+            f'columnBreak="0" merged="0"><hp:run charPrIDRef="14">{tbl}<hp:t/></hp:run>'
+            f'{_LINESEG}</hp:p>')
 
 # ──────────────────────────────────────────────────────────────────────────
 # 표지 필드 치환 (앵커 문단 범위에서 <hp:t> 텍스트만 교체, 주석런 제거)
@@ -215,13 +271,11 @@ def _build_body_xml(spec):
             parts.append(make_body_line(lvl, item.get("text", ""),
                                         page_break=("0")))
         first = False
-    # 참고/붙임
+    # 참고/붙임 — 좌측 남색 박스 + 굵은 밑줄 제목칸 머리 디자인
     for n, apx in enumerate(spec.get("appendix", []), start=1):
         label = apx.get("label", f"참고 {n}")
-        parts.append(make_para(label, APX_LABEL["cp"], pp=APX_LABEL["pp"], h=1500,
-                               page_break="1"))
-        if apx.get("heading"):
-            parts.append(make_para(apx["heading"], APX_TITLE["cp"], pp=APX_TITLE["pp"], h=1600))
+        heading = apx.get("heading", "")
+        parts.append(make_appendix_header(label, heading, page_break="1"))
         for item in apx.get("body", []):
             if item.get("type") == "table":
                 parts.append(make_table(item.get("headers", []), item.get("rows", []),

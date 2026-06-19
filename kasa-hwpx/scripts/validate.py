@@ -99,6 +99,17 @@ def kasa_check(path):
     # 표지 핵심 요소
     for need, lab in [("우주항공청", "기관명"), ("우주항공 5대 강국", "슬로건")]:
         notes.append((f"[OK] 표지 {lab} 존재" if need in text else f"[경고] 표지 {lab} 누락"))
+
+    # 본문 흐름 줄겹침(vertpos) 회귀 점검: 본문 영역에 vertpos="0" 캐시가 다수면 경고
+    body = sec[sec.find("</hp:ctrl>"):] if "</hp:ctrl>" in sec else sec
+    anchor = sec.find("□ ")
+    if anchor != -1:
+        zero_segs = sec.count('vertpos="0"', anchor)
+        if zero_segs >= 3:
+            notes.append(f"[경고] 본문 영역에 vertpos=\"0\" lineseg가 {zero_segs}개 — "
+                         f"한글에서 줄이 겹쳐 보일 수 있음(흐름 문단 캐시 제거 필요)")
+        else:
+            notes.append("[OK] 본문 흐름 문단에 줄겹침 유발 캐시 없음")
     return notes
 
 def main():

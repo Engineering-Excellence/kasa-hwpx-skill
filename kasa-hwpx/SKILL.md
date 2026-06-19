@@ -131,6 +131,8 @@ python3 scripts/validate.py 결과.hwpx --kasa
 6. 본문 문단 id는 고유 정수, XML 특수문자 `<>&"` 이스케이프(엔진이 처리).
 7. **대외비/내부 자료**는 MI 생략(워터마크 대체)이 허용된다 — v1은 안내만 하며, 필요 시 사용자에게 확인.
 8. 생성 후 반드시 `validate.py --kasa` 통과를 확인하고, 한글에서 열어 최종 점검을 권장한다.
+9. **본문 흐름 문단에 `linesegarray`(줄 위치 캐시)를 넣지 않는다.** 원본 양식의 본문 lineseg는 `vertpos`가 텍스트영역 기준 *누적 절대값*이라, 모든 문단에 `vertpos="0"`을 박으면 한글이 캐시를 신뢰해 줄을 같은 높이에 겹쳐 그린다. 캐시를 비우면 한글이 열 때 줄 위치를 재계산(relayout)하여 자동 줄바꿈까지 정확히 배치한다(`_LINESEG = ""`).
+10. **참고/붙임 머리는 3칸 표 디자인**을 사용한다 — 좌측 남색 박스(`borderFill 16`+`charPr 2` 흰색 16pt) + 간격칸(`borderFill 1` 무테) + 굵은 밑줄 제목칸(`borderFill 17`+`charPr 63` 검정 16pt). 엔진의 `make_appendix_header(label, heading)`가 생성한다.
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`
