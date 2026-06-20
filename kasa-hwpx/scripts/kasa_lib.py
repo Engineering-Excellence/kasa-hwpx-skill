@@ -17,14 +17,26 @@ import os, re, io, json, zipfile, random
 # 검증된 스타일 ID 맵 (templates/kasa 분석 결과)
 #   글꼴: 0=맑은 고딕, 3=함초롬바탕, 5=HY견고딕, 6=HY헤드라인M
 # ──────────────────────────────────────────────────────────────────────────
-# 본문 위계: (마커, 들여쓰기, charPrIDRef, height[HWPUNIT=pt*100])  paraPr는 공통 3
+# 본문 위계: 기준 양식 방식 = '선행 공백으로 항목 시작, 내어쓰기로 2줄 이상 정렬'.
+#   [HWP 내어쓰기 모델] 첫 줄 시작 = 왼쪽여백(left), 나머지 줄 시작 = left + |intent|.
+#     → 첫 줄 시작 위치는 반드시 0 (left=0). 마커 위치는 '선행 공백'으로만 조정한다.
+#     → 2줄 이상일 때만 '나머지 줄 시작'을 첫 글자 위치에 맞춘다: |intent| = 첫 글자 위치(접두부 폭).
+#   접두부 폭 = '나머지 줄 시작'(|intent|). 함초롬바탕·맑은고딕은 한글=전각(1em),
+#   ASCII(공백·-·*)=반각(0.5em). 접두부를 em 배수로 계산해 글자크기에 정확히 맞춘다.
+#     content " ㅇ "      = 0.5+1+0.5 = 2.0em ×15pt = 3000
+#     sub     "   - "     = 1.5+0.5+0.5 = 2.5em ×15pt = 3750
+#     note    "     ※ "@12= 2.5+1+0.5 = 4.0em ×12pt = 4800
+#     footnote"     * "@12= 2.5+0.5+0.5 = 3.5em ×12pt = 4200
+#   (id, left[항상 0], intent[=-접두부 폭])
+INDENT_PARAPR = [("22", 0, -3000), ("23", 0, -3750),
+                 ("24", 0, -4800), ("25", 0, -4200)]
 BODY_LEVELS = {
-    "title":    {"marker": "□ ", "indent": "",      "cp": "30", "h": 1500},  # HY헤드라인M 15pt
-    "content":  {"marker": "ㅇ ", "indent": " ",     "cp": "41", "h": 1500},  # 함초롬바탕 15pt
-    "sub":      {"marker": "- ", "indent": "   ",    "cp": "41", "h": 1500},  # 함초롬바탕 15pt
-    "note":     {"marker": "※ ", "indent": "     ",  "cp": "29", "h": 1200},  # 맑은 고딕 12pt
-    "footnote": {"marker": "* ", "indent": "     ",  "cp": "29", "h": 1200},  # 맑은 고딕 12pt
-    "plain":    {"marker": "",   "indent": "",       "cp": "41", "h": 1500},
+    "title":    {"marker": "□ ",      "pp": "3",  "cp": "30", "h": 1500},  # □: 첫줄 0(기준 동일)
+    "content":  {"marker": " ㅇ ",     "pp": "22", "cp": "41", "h": 1500},  # 선행1칸, 첫줄 0 + 내어쓰기
+    "sub":      {"marker": "   - ",    "pp": "23", "cp": "41", "h": 1500},  # 선행3칸, 첫줄 0 + 내어쓰기
+    "note":     {"marker": "     ※ ",  "pp": "24", "cp": "29", "h": 1200},  # 선행5칸, 첫줄 0 + 내어쓰기
+    "footnote": {"marker": "     * ",  "pp": "25", "cp": "29", "h": 1200},  # 선행5칸, 첫줄 0 + 내어쓰기
+    "plain":    {"marker": "",         "pp": "3",  "cp": "41", "h": 1500},
 }
 BODY_PARAPR = "3"
 
@@ -86,6 +98,36 @@ def read_package(path):
             parts[name] = z.read(name)
     return parts, order
 
+def _inject_indent_parapr(header_xml):
+    """본문 위계용 '무번호 들여쓰기' paraPr을 header.xml에 주입(멱등).
+    양식의 좌여백 paraPr은 모두 OUTLINE(자동번호)이므로, 무번호 paraPr 3을
+    복제해 좌여백만 부여한 새 paraPr(INDENT_PARAPR)을 추가한다."""
+    # 이미 주입돼 있으면 그대로 둔다(멱등)
+    if all(f'<hh:paraPr id="{pid}"' in header_xml for pid, *_ in INDENT_PARAPR):
+        return header_xml
+    m = re.search(r'<hh:paraPr id="3".*?</hh:paraPr>', header_xml, re.S)
+    if not m:
+        return header_xml  # 기준 양식이 아니면 건드리지 않음
+    base = m.group(0)
+    clones = []
+    for pid, left, intent in INDENT_PARAPR:
+        if f'<hh:paraPr id="{pid}"' in header_xml:
+            continue
+        c = base.replace('id="3"', f'id="{pid}"', 1)
+        # 좌여백 0 → 지정값, 내어쓰기 0 → 지정값 (hp:case·hp:default 두 곳 모두)
+        c = c.replace('<hc:left value="0"', f'<hc:left value="{left}"')
+        c = c.replace('<hc:intent value="0"', f'<hc:intent value="{intent}"')
+        clones.append(c)
+    if not clones:
+        return header_xml
+    header_xml = header_xml.replace('</hh:paraProperties>', "".join(clones) + '</hh:paraProperties>', 1)
+    # itemCnt 갱신
+    cm = re.search(r'(<hh:paraProperties itemCnt=")(\d+)(">)', header_xml)
+    if cm:
+        new_cnt = int(cm.group(2)) + len(clones)
+        header_xml = header_xml[:cm.start()] + f'{cm.group(1)}{new_cnt}{cm.group(3)}' + header_xml[cm.end():]
+    return header_xml
+
 def write_package(path, parts, order):
     """mimetype을 첫 엔트리·무압축으로 기록하여 HWPX 규칙을 지킨다."""
     names = [n for n in order if n in parts]
@@ -120,7 +162,7 @@ def make_body_line(level, text, page_break="0"):
     if level not in BODY_LEVELS:
         raise ValueError(f"알 수 없는 본문 레벨: {level} (가능: {list(BODY_LEVELS)})")
     L = BODY_LEVELS[level]
-    return make_para(L["indent"] + L["marker"] + text, L["cp"],
+    return make_para(L["marker"] + text, L["cp"], pp=L["pp"],
                      h=L["h"], page_break=page_break)
 
 def make_empty(page_break="0"):
@@ -312,6 +354,10 @@ def build_report(template_path, spec, out_path):
     sec = sec[:body_start] + new_body + sec[sec_close:]
 
     parts["Contents/section0.xml"] = sec.encode("utf-8")
+    # 본문 위계용 무번호 들여쓰기 paraPr 주입(header.xml)
+    if "Contents/header.xml" in parts:
+        hx = parts["Contents/header.xml"].decode("utf-8")
+        parts["Contents/header.xml"] = _inject_indent_parapr(hx).encode("utf-8")
     write_package(out_path, parts, order)
     fix_namespaces(out_path)
     return out_path

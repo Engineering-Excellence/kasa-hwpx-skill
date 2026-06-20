@@ -110,6 +110,22 @@ def kasa_check(path):
                          f"한글에서 줄이 겹쳐 보일 수 있음(흐름 문단 캐시 제거 필요)")
         else:
             notes.append("[OK] 본문 흐름 문단에 줄겹침 유발 캐시 없음")
+
+    # 자동번호(OUTLINE) 회귀 점검: 본문이 OUTLINE paraPr을 참조하면 불필요한 번호가 붙음
+    try:
+        hdr = parts.get("Contents/header.xml", b"").decode("utf-8")
+        outline_ids = set(re.findall(r'<hh:paraPr id="(\d+)"(?:(?!</hh:paraPr>).)*?'
+                                     r'<hh:heading type="OUTLINE"', hdr, re.S))
+        if anchor != -1 and outline_ids:
+            used = set(re.findall(r'paraPrIDRef="(\d+)"', sec[anchor:]))
+            bad = sorted(outline_ids & used, key=int)
+            if bad:
+                notes.append(f"[경고] 본문이 자동번호(OUTLINE) paraPr {bad} 참조 — "
+                             f"불필요한 개요 번호가 붙음(무번호 들여쓰기 paraPr 사용 필요)")
+            else:
+                notes.append("[OK] 본문에 자동번호 유발 paraPr 없음")
+    except Exception:
+        pass
     return notes
 
 def main():
