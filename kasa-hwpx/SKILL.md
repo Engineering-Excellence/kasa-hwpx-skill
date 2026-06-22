@@ -23,6 +23,7 @@ kasa-hwpx/
 │   ├── build_report.py    # CLI: JSON 사양 / 마커 텍스트 → .hwpx
 │   ├── validate.py        # 구조 + KASA 규정 준수 검증
 │   ├── extract_text.py    # 텍스트 추출
+│   ├── redraft.py         # 재기안: 기존 HWPX 서식 보존 본문 치환
 │   └── office/{unpack,pack}.py
 ├── assets/kasa-standard-report.hwpx   # 기준 양식(SSOT)
 └── references/
@@ -35,10 +36,19 @@ kasa-hwpx/
 ```
 요청
  ├─ "보고서 만들어줘 / 작성해줘"        → 워크플로우 A (사양→보고서 생성)
- ├─ "이 양식에 내용만 채워줘"           → 워크플로우 B (텍스트 치환, 서식 100% 보존)
+ ├─ "이 양식에 내용만 채워줘"           → 워크플로우 B (텍스트 치환/재기안, 서식 100% 보존)
  ├─ "이 hwpx 수정/편집"                 → 워크플로우 C (unpack→편집→pack)
  └─ "이 hwpx 읽어줘/내용 추출"          → 워크플로우 E (텍스트 추출)
 ```
+
+> **워크플로우 B(재기안) 빠른 실행.** 임의의 기존 HWPX(KASA 여부 무관)의 서식·표·여백을
+> 보존한 채 본문 문구만 바꾼다. 한컴 없이 동작하며, 치환된 흐름 문단의 `linesegarray`를
+> 제거해 한글이 열 때 재계산한다.
+> ```bash
+> # repl.json 예: {"2025년": "2026년", "(부서명)": "우주수송정책과"}
+> python3 scripts/redraft.py --input 원본.hwpx --map repl.json --output 결과.hwpx
+> #   --mode exact  : <hp:t> 전체가 키와 정확히 일치할 때만 치환(오치환 방지)
+> ```
 
 ## 워크플로우 A: 사양 → 보고서 생성 (기본)
 
@@ -138,6 +148,7 @@ python3 scripts/validate.py 결과.hwpx --kasa
 13. **표 내부는 내어쓰기 금지.** 표 셀 원본 paraPr(13/14/17)은 intent=-2440(내어쓰기)이므로, intent=0으로 복제한 paraPr 26/27/28을 주입해 표에 사용한다(`INDENT_PARAPR`, `TBL_*`).
 14. **긴 제목은 2줄 허용.** 표지 제목 문단의 줄위치 캐시(linesegarray)를 제거해 한글이 재계산하도록 한다(긴 제목 자동 2줄). `_set_field_by_anchor(..., strip_lineseg=True)`.
 15. **참고 서식은 본문과 동일.** 참고 본문도 본문과 같은 간격(스페이서)·내어쓰기를 적용한다(`_build_body_xml`의 참고 루프).
+16. **재기안(re-draft)은 `<hp:t>` 단위 치환 + 전체 `linesegarray` 제거.** 기존 HWPX의 서식을 보존한 채 본문만 바꿀 때는 `redraft.py`를 쓴다. charPr/paraPr·표·셀병합·여백은 그대로 두고 텍스트만 교체하며, 치환 후 줄 위치 캐시를 비워 한글이 재계산하도록 한다(규칙 9와 동일 원리). 오치환이 우려되면 `--mode exact`로 `<hp:t>` 전체 일치만 치환한다.
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`
