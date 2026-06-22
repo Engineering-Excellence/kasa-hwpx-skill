@@ -133,7 +133,11 @@ python3 scripts/validate.py 결과.hwpx --kasa
 8. 생성 후 반드시 `validate.py --kasa` 통과를 확인하고, 한글에서 열어 최종 점검을 권장한다.
 9. **본문 흐름 문단에 `linesegarray`(줄 위치 캐시)를 넣지 않는다.** 원본 양식의 본문 lineseg는 `vertpos`가 텍스트영역 기준 *누적 절대값*이라, 모든 문단에 `vertpos="0"`을 박으면 한글이 캐시를 신뢰해 줄을 같은 높이에 겹쳐 그린다. 캐시를 비우면 한글이 열 때 줄 위치를 재계산(relayout)하여 자동 줄바꿈까지 정확히 배치한다(`_LINESEG = ""`).
 10. **참고/붙임 머리는 3칸 표 디자인**을 사용한다 — 좌측 남색 박스(`borderFill 16`+`charPr 2` 흰색 16pt) + 간격칸(`borderFill 1` 무테) + 굵은 밑줄 제목칸(`borderFill 17`+`charPr 63` 검정 16pt). 엔진의 `make_appendix_header(label, heading)`가 생성한다.
-11. **본문 위계 = 선행 공백(항목 시작) + 내어쓰기(2줄 이상).** HWP 내어쓰기 모델은 '첫 줄 시작 = 왼쪽여백(left), 나머지 줄 시작 = left + |intent|'이다. **첫 줄 시작은 반드시 0(left=0)**, 마커 위치는 선행 공백으로만 조정(□=0, ㅇ=1, -=3, ※=5칸). 2줄 이상일 때만 **나머지 줄 시작(|intent|)**을 첫 글자에 맞춘다. 접두부 폭은 한글=전각(1em)·ASCII=반각(0.5em) 기준 em 배수로 계산: content 2.0em×15pt=3000, sub 2.5em×15pt=3750, note 4.0em×12pt=4800, footnote 3.5em×12pt=4200. 빌드 시 무번호 paraPr 22~25(`INDENT_PARAPR`)를 헤더에 주입(OUTLINE 자동번호 회피). ※ 맑은고딕(note)은 비례폭이라 미세 차이가 있으면 해당 intent만 조정.
+11. **본문 위계 = 선행 공백(항목 시작) + 내어쓰기(2줄 이상).** HWP 내어쓰기 모델은 '첫 줄 시작 = 왼쪽여백(left), 나머지 줄 시작 = left + |intent|'이다. **첫 줄 시작은 반드시 0(left=0)**, 마커 위치는 선행 공백으로만 조정(□=0, ㅇ=1, -=3, ※=5칸). 2줄 이상일 때만 **나머지 줄 시작(|intent|)**을 첫 글자에 맞춘다(한글=전각1em·ASCII=반각0.5em 기준 em 배수: content 3000, sub 3750, note 4800, footnote 4200). 빌드 시 무번호 paraPr 22~25를 주입.
+12. **항목 앞 간격(빈 줄)은 첨부 참고 양식과 동일.** 항목 앞에 빈 문단(스페이서)을 넣어 간격을 준다: □ 15pt, ㅇ 10pt, - 5pt, ※/* 3pt, 표 5pt(빈 문단의 글자높이로 간격 크기 결정). 문서 첫 항목 앞에는 넣지 않는다(`SPACER_CP`, `_spacer`). 기준은 `assets/reference-form-spacing.hwpx`.
+13. **표 내부는 내어쓰기 금지.** 표 셀 원본 paraPr(13/14/17)은 intent=-2440(내어쓰기)이므로, intent=0으로 복제한 paraPr 26/27/28을 주입해 표에 사용한다(`INDENT_PARAPR`, `TBL_*`).
+14. **긴 제목은 2줄 허용.** 표지 제목 문단의 줄위치 캐시(linesegarray)를 제거해 한글이 재계산하도록 한다(긴 제목 자동 2줄). `_set_field_by_anchor(..., strip_lineseg=True)`.
+15. **참고 서식은 본문과 동일.** 참고 본문도 본문과 같은 간격(스페이서)·내어쓰기를 적용한다(`_build_body_xml`의 참고 루프).
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`

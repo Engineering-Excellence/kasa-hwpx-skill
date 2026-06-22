@@ -27,9 +27,16 @@ import os, re, io, json, zipfile, random
 #     sub     "   - "     = 1.5+0.5+0.5 = 2.5em ×15pt = 3750
 #     note    "     ※ "@12= 2.5+1+0.5 = 4.0em ×12pt = 4800
 #     footnote"     * "@12= 2.5+0.5+0.5 = 3.5em ×12pt = 4200
-#   (id, left[항상 0], intent[=-접두부 폭])
-INDENT_PARAPR = [("22", 0, -3000), ("23", 0, -3750),
-                 ("24", 0, -4800), ("25", 0, -4200)]
+#   (id, src=복제원본 paraPr, left[항상 0], intent[=-접두부 폭])
+INDENT_PARAPR = [("22", "3", 0, -3000), ("23", "3", 0, -3750),
+                 ("24", "3", 0, -4800), ("25", "3", 0, -4200),
+                 # 표 셀: 원본 13/14/17은 intent=-2440(내어쓰기) → 0으로 복제(표 내부 내어쓰기 금지)
+                 ("26", "13", 0, 0), ("27", "14", 0, 0), ("28", "17", 0, 0)]
+
+# 항목 앞 간격(빈 줄 스페이서) — 첨부 양식과 동일: □ 15pt, ㅇ 10pt, - 5pt, ※/* 3pt, 표 5pt.
+#   빈 문단의 글자높이(charPr)로 간격을 만든다(우리 템플릿: 1500=15,1000=1,500=18,300=22).
+SPACER_CP = {"title": "15", "content": "1", "sub": "18",
+             "note": "22", "footnote": "22", "table": "18", "plain": "1"}
 BODY_LEVELS = {
     "title":    {"marker": "□ ",      "pp": "3",  "cp": "30", "h": 1500},  # □: 첫줄 0(기준 동일)
     "content":  {"marker": " ㅇ ",     "pp": "22", "cp": "41", "h": 1500},  # 선행1칸, 첫줄 0 + 내어쓰기
@@ -47,10 +54,10 @@ SLOGAN_LEAD_DEFAULT = "우주항공 5대 강국 입국을 주도하는"
 # 표 스타일(데이터 표 분석 결과)
 TBL_TOTAL_W = 47622
 TBL_COLS_3 = [13893, 18987, 14742]
-TBL_TITLE = {"bf": "8",  "pp": "13", "cp": "9"}    # 제목행(병합) 13pt bold
-TBL_HEAD  = {"bf": "11", "pp": "14", "cp": "17"}   # 머리행 12pt bold, 음영
-TBL_LABEL = {"bf": "3",  "pp": "14", "cp": "17"}   # 데이터행 첫 칸(구분) 12pt bold
-TBL_DATA  = {"bf": "3",  "pp": "17", "cp": "31"}   # 데이터 셀 12pt
+TBL_TITLE = {"bf": "8",  "pp": "26", "cp": "9"}    # 제목행(병합) 13pt bold (무내어쓰기)
+TBL_HEAD  = {"bf": "11", "pp": "27", "cp": "17"}   # 머리행 12pt bold, 음영 (무내어쓰기)
+TBL_LABEL = {"bf": "3",  "pp": "27", "cp": "17"}   # 데이터행 첫 칸(구분) 12pt bold (무내어쓰기)
+TBL_DATA  = {"bf": "3",  "pp": "28", "cp": "31"}   # 데이터 셀 12pt (무내어쓰기)
 
 # 참고/붙임 — 머리 디자인(좌측 남색 박스 + 굵은 밑줄 제목칸 3칸 표)
 #   표준양식 검증 ID로만 구성:
@@ -99,34 +106,37 @@ def read_package(path):
     return parts, order
 
 def _inject_indent_parapr(header_xml):
-    """본문 위계용 '무번호 들여쓰기' paraPr을 header.xml에 주입(멱등).
-    양식의 좌여백 paraPr은 모두 OUTLINE(자동번호)이므로, 무번호 paraPr 3을
-    복제해 좌여백만 부여한 새 paraPr(INDENT_PARAPR)을 추가한다."""
-    # 이미 주입돼 있으면 그대로 둔다(멱등)
+    """본문 위계 들여쓰기 + 표 무내어쓰기용 paraPr을 header.xml에 주입(멱등).
+    INDENT_PARAPR의 (새 id, 원본 id, left, intent)대로 원본 paraPr을 복제해
+    여백·내어쓰기 값을 강제 설정한다. 본문은 paraPr 3(무번호) 복제, 표는 13/14/17 복제."""
     if all(f'<hh:paraPr id="{pid}"' in header_xml for pid, *_ in INDENT_PARAPR):
         return header_xml
-    m = re.search(r'<hh:paraPr id="3".*?</hh:paraPr>', header_xml, re.S)
-    if not m:
-        return header_xml  # 기준 양식이 아니면 건드리지 않음
-    base = m.group(0)
     clones = []
-    for pid, left, intent in INDENT_PARAPR:
+    for pid, src, left, intent in INDENT_PARAPR:
         if f'<hh:paraPr id="{pid}"' in header_xml:
             continue
-        c = base.replace('id="3"', f'id="{pid}"', 1)
-        # 좌여백 0 → 지정값, 내어쓰기 0 → 지정값 (hp:case·hp:default 두 곳 모두)
-        c = c.replace('<hc:left value="0"', f'<hc:left value="{left}"')
-        c = c.replace('<hc:intent value="0"', f'<hc:intent value="{intent}"')
+        m = re.search(rf'<hh:paraPr id="{src}".*?</hh:paraPr>', header_xml, re.S)
+        if not m:
+            continue
+        c = m.group(0).replace(f'id="{src}"', f'id="{pid}"', 1)
+        # 여백 left·내어쓰기 intent를 원본 값과 무관하게 강제 설정(hp:case·hp:default 모두)
+        c = re.sub(r'(<hc:left value=")-?\d+(")', rf'\g<1>{left}\g<2>', c)
+        c = re.sub(r'(<hc:intent value=")-?\d+(")', rf'\g<1>{intent}\g<2>', c)
         clones.append(c)
     if not clones:
         return header_xml
     header_xml = header_xml.replace('</hh:paraProperties>', "".join(clones) + '</hh:paraProperties>', 1)
-    # itemCnt 갱신
     cm = re.search(r'(<hh:paraProperties itemCnt=")(\d+)(">)', header_xml)
     if cm:
         new_cnt = int(cm.group(2)) + len(clones)
         header_xml = header_xml[:cm.start()] + f'{cm.group(1)}{new_cnt}{cm.group(3)}' + header_xml[cm.end():]
     return header_xml
+
+def _spacer(level):
+    """항목 앞 간격용 빈 문단(스페이서). charPr 높이로 간격 크기를 만든다."""
+    cp = SPACER_CP.get(level, "1")
+    return (f'<hp:p id="{next_id()}" paraPrIDRef="3" styleIDRef="0" pageBreak="0" '
+            f'columnBreak="0" merged="0"><hp:run charPrIDRef="{cp}"><hp:t></hp:t></hp:run></hp:p>')
 
 def write_package(path, parts, order):
     """mimetype을 첫 엔트리·무압축으로 기록하여 HWPX 규칙을 지킨다."""
@@ -274,8 +284,9 @@ def make_appendix_header(label, heading, page_break="1"):
 # ──────────────────────────────────────────────────────────────────────────
 # 표지 필드 치환 (앵커 문단 범위에서 <hp:t> 텍스트만 교체, 주석런 제거)
 # ──────────────────────────────────────────────────────────────────────────
-def _set_field_by_anchor(sec, anchor, value):
-    """anchor 문자열이 포함된 (표 비포함) 문단을 찾아 첫 <hp:t>=value, 나머지 비움."""
+def _set_field_by_anchor(sec, anchor, value, strip_lineseg=False):
+    """anchor 문자열이 포함된 (표 비포함) 문단을 찾아 첫 <hp:t>=value, 나머지 비움.
+    strip_lineseg=True면 줄위치 캐시를 제거해 한글이 재계산(긴 제목 2줄 자동 줄바꿈)."""
     pos = sec.find(anchor)
     if pos == -1:
         return sec
@@ -293,7 +304,10 @@ def _set_field_by_anchor(sec, anchor, value):
     for i, m in enumerate(ts):
         out.append(para[last:m.start()]); out.append(repl(i, m)); last = m.end()
     out.append(para[last:])
-    return sec[:p0] + "".join(out) + sec[p1:]
+    new_para = "".join(out)
+    if strip_lineseg:
+        new_para = re.sub(r"<hp:linesegarray>.*?</hp:linesegarray>", "", new_para, flags=re.S)
+    return sec[:p0] + new_para + sec[p1:]
 
 def _replace_unique_text(sec, old, new):
     return sec.replace(f"<hp:t>{old}</hp:t>", f"<hp:t>{xml_escape(new)}</hp:t>", 1)
@@ -303,27 +317,33 @@ def _replace_unique_text(sec, old, new):
 # ──────────────────────────────────────────────────────────────────────────
 def _build_body_xml(spec):
     parts = []
-    first = True
+    state = {"first": True}
+    def emit(spacer_level, xml):
+        if not state["first"]:
+            parts.append(_spacer(spacer_level))   # 항목 앞 간격(빈 줄)
+        parts.append(xml)
+        state["first"] = False
+    # 본문
     for item in spec.get("body", []):
         if item.get("type") == "table":
-            parts.append(make_table(item.get("headers", []), item.get("rows", []),
+            emit("table", make_table(item.get("headers", []), item.get("rows", []),
                                      item.get("title")))
         else:
             lvl = item.get("level", "content")
-            parts.append(make_body_line(lvl, item.get("text", ""),
-                                        page_break=("0")))
-        first = False
-    # 참고/붙임 — 좌측 남색 박스 + 굵은 밑줄 제목칸 머리 디자인
+            emit(lvl, make_body_line(lvl, item.get("text", "")))
+    # 참고/붙임 — 본문과 동일한 간격·내어쓰기 적용(항목 4)
     for n, apx in enumerate(spec.get("appendix", []), start=1):
         label = apx.get("label", f"참고 {n}")
         heading = apx.get("heading", "")
-        parts.append(make_appendix_header(label, heading, page_break="1"))
+        parts.append(make_appendix_header(label, heading, page_break="1"))  # 새 페이지(앞 간격 불요)
+        state["first"] = False   # 머리 다음 첫 항목부터는 본문과 동일하게 간격 부여
         for item in apx.get("body", []):
             if item.get("type") == "table":
-                parts.append(make_table(item.get("headers", []), item.get("rows", []),
-                                        item.get("title")))
+                emit("table", make_table(item.get("headers", []), item.get("rows", []),
+                                         item.get("title")))
             else:
-                parts.append(make_body_line(item.get("level", "content"), item.get("text", "")))
+                lvl = item.get("level", "content")
+                emit(lvl, make_body_line(lvl, item.get("text", "")))
     return "".join(parts)
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -339,7 +359,7 @@ def build_report(template_path, spec, out_path):
     if spec.get("pub_date"):
         sec = _set_field_by_anchor(sec, "(함초롬바탕, 24Pt)", spec["pub_date"])
     if spec.get("title"):
-        sec = _set_field_by_anchor(sec, "(HY헤드라인M, 20Pt)", spec["title"])
+        sec = _set_field_by_anchor(sec, "(HY헤드라인M, 20Pt)", spec["title"], strip_lineseg=True)
     if spec.get("author"):
         sec = _replace_unique_text(sec, "(’26.00.00., 행정법무담당관)", spec["author"])
     # 표지 슬로건 기관명 주석 제거(텍스트는 우주항공청 유지)
