@@ -54,6 +54,9 @@ python3 kasa-hwpx/scripts/validate.py 보고서.hwpx --kasa
 python3 kasa-hwpx/scripts/redraft.py --input 원본.hwpx --map repl.json --output 결과.hwpx
 ```
 
+재기안은 모든 섹션을 처리하고, 키별 치환 건수를 출력하며 미적중 키를 경고합니다.
+미변경 zip 엔트리는 원본 메타데이터 그대로 유지됩니다(서식 보존).
+
 ## 스킬 패키징
 
 ```bash
@@ -69,6 +72,9 @@ python3 build_skill.py        # → dist/kasa-hwpx.skill 생성
 - 좌여백 paraPr이 모두 OUTLINE(자동번호)이라, 무번호·무내어쓰기 paraPr을 빌드 시 헤더에 주입.
 - 항목 앞 간격은 빈 문단(스페이서)으로 부여(□ 15pt, ㅇ 10pt, - 5pt, ※/* 3pt).
 - 표 내부는 내어쓰기를 적용하지 않음. 긴 제목은 2줄 자동 줄바꿈.
+- 서식 보존 편집(재기안·치환)은 미변경 zip 엔트리의 원본 메타데이터(ZipInfo)를 그대로 유지.
+- 재기안은 `<hp:t>` 내 컨트롤 태그(mixed content)를 보존한 채 텍스트 구간만 치환.
+- 검증기는 세로쓰기 오변환·표 셀 과밀·header `itemCnt` 정합까지 점검.
 - 자세한 규칙은 `kasa-hwpx/SKILL.md` 참고.
 
 ## 버전 히스토리
@@ -80,6 +86,7 @@ python3 build_skill.py        # → dist/kasa-hwpx.skill 생성
 - `v0.2.0` feat: 선행 공백 + 내어쓰기 기반 본문 위계
 - `v0.3.0` feat: 항목 간격·긴 제목 2줄·표 내어쓰기 제외·참고 서식 통일
 - `v0.4.0` feat: 재기안(`redraft.py`) — 기존 HWPX 서식 보존 본문 치환 / docs: 쉬운 사용설명서 추가
+- `v0.5.0` feat: 기여자 저장소 업스트림 반영 — 재기안 가드레일(전 섹션·mixed content 보호·미적중 키 경고), zip 메타데이터 보존 기록, 검증 강화(세로쓰기 오변환·표 셀 과밀·itemCnt 정합)
 
 ### 커밋 규약
 
@@ -107,10 +114,10 @@ python3 build_skill.py        # → dist/kasa-hwpx.skill 생성
 
 ## 기여자 (Contributors)
 
-| 기여자                                                                   | 역할 |
-|-----------------------------------------------------------------------| --- |
+| 기여자 | 역할 |
+| --- | --- |
 | [Engineering-Excellence](https://github.com/Engineering-Excellence) (Kyle) | 메인테이너 · KASA 표준보고서 엔진 |
-| [Canine89 / 박현규](https://github.com/Canine89/hwpxskill)               | 원본 `hwpx` 스킬 제작자 — XML 직접 제어 방식의 기반 |
-| [ai-public-peasant](https://github.com/ai-public-peasant)             | [hwpx-rekian](https://github.com/ai-public-peasant/hwpx-rekian) 제작자 — 재기안(re-draft) 기능 설계 참고 |
-| [jkf87](https://github.com/jkf87)                                     | hwpx-skill 접근법 참고 — 네임스페이스 후처리·secPr 보존·mimetype STORED·워크플로우 트리 |
-| [Claude](https://github.com/claude) (Anthropic)                       | AI 페어 — 엔진·문서 작성 보조 |
+| [Canine89 / 박현규](https://github.com/Canine89/hwpxskill) | 원본 `hwpx` 스킬 제작자 — XML 직접 제어 방식의 기반 · zip 바이트 보존·finalize 가드 참고 |
+| [ai-public-peasant](https://github.com/ai-public-peasant) | [hwpx-rekian](https://github.com/ai-public-peasant/hwpx-rekian) 제작자 — 재기안(re-draft) 기능 설계·XML 가드레일 참고 |
+| [jkf87](https://github.com/jkf87) | hwpx-skill 접근법 참고 — 네임스페이스 후처리·secPr 보존·mimetype STORED·워크플로우 트리·세로쓰기 오변환 가드 |
+| [Claude](https://github.com/claude) (Anthropic) | AI 페어 — 엔진·문서 작성 보조 |

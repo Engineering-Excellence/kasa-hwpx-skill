@@ -43,11 +43,13 @@ kasa-hwpx/
 
 > **워크플로우 B(재기안) 빠른 실행.** 임의의 기존 HWPX(KASA 여부 무관)의 서식·표·여백을
 > 보존한 채 본문 문구만 바꾼다. 한컴 없이 동작하며, 치환된 흐름 문단의 `linesegarray`를
-> 제거해 한글이 열 때 재계산한다.
+> 제거해 한글이 열 때 재계산한다. 모든 섹션(section0..N)을 처리하고, 미변경 zip 엔트리는
+> 원본 메타데이터 그대로 유지하며, 키별 치환 건수를 출력해 **미적중 키를 경고**한다.
 > ```bash
 > # repl.json 예: {"2025년": "2026년", "(부서명)": "우주수송정책과"}
 > python3 scripts/redraft.py --input 원본.hwpx --map repl.json --output 결과.hwpx
 > #   --mode exact  : <hp:t> 전체가 키와 정확히 일치할 때만 치환(오치환 방지)
+> # 미적중 키가 있으면 extract_text.py로 원문 표기를 확인 후 맵을 수정한다.
 > ```
 
 ## 워크플로우 A: 사양 → 보고서 생성 (기본)
@@ -130,7 +132,10 @@ python3 scripts/extract_text.py 문서.hwpx
 ```bash
 python3 scripts/validate.py 결과.hwpx --kasa
 ```
-구조 무결성(ZIP/mimetype/XML/secPr/미정의 참조)과 KASA 규정(MI·여백·마커 글꼴·표지 요소)을 점검한다.
+구조 무결성(ZIP/mimetype/XML/secPr/미정의 참조/`itemCnt` 정합)과 KASA 규정(MI·여백·마커 글꼴·표지 요소)을 점검한다.
+`--kasa`는 추가로 **줄겹침 캐시·자동번호 회귀·세로쓰기 오변환(`textDirection="VERTICAL"`)·
+표 셀 과밀(긴 텍스트 한 문단 집중)**을 탐지한다. 셀 과밀 경고가 나오면 해당 셀 내용을
+여러 문단이나 목록으로 나눈다.
 
 ## Critical Rules
 1. **HWPX만** 지원(`.hwp` 바이너리 미지원).
@@ -149,6 +154,8 @@ python3 scripts/validate.py 결과.hwpx --kasa
 14. **긴 제목은 2줄 허용.** 표지 제목 문단의 줄위치 캐시(linesegarray)를 제거해 한글이 재계산하도록 한다(긴 제목 자동 2줄). `_set_field_by_anchor(..., strip_lineseg=True)`.
 15. **참고 서식은 본문과 동일.** 참고 본문도 본문과 같은 간격(스페이서)·내어쓰기를 적용한다(`_build_body_xml`의 참고 루프).
 16. **재기안(re-draft)은 `<hp:t>` 단위 치환 + 전체 `linesegarray` 제거.** 기존 HWPX의 서식을 보존한 채 본문만 바꿀 때는 `redraft.py`를 쓴다. charPr/paraPr·표·셀병합·여백은 그대로 두고 텍스트만 교체하며, 치환 후 줄 위치 캐시를 비워 한글이 재계산하도록 한다(규칙 9와 동일 원리). 오치환이 우려되면 `--mode exact`로 `<hp:t>` 전체 일치만 치환한다.
+17. **재기안 XML 가드레일.** `<hp:t>` 안에 컨트롤 태그가 섞인 경우(mixed content) 태그는 건드리지 않고 텍스트 구간에만 치환한다(exact 모드는 해당 노드를 건너뜀). `linesegarray`는 속성·self-closing 형태까지 `LINESEG_RE`로 제거한다. 치환 후 키별 적중 수를 확인해 미적중 키는 사용자에게 알린다. (참고: ai-public-peasant/hwpx-rekian XML guardrails, Canine89/hwpxskill finalize 가드)
+18. **서식 보존 편집은 zip 메타데이터도 보존한다.** 재기안·`fill_template` 등 서식 보존 경로는 `write_package_preserving`으로 기록해, 미변경 엔트리의 원본 ZipInfo(순서·시각·압축방식)를 그대로 유지한다. 한글이 zip 메타데이터에 민감할 수 있기 때문이다. (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes')
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`
