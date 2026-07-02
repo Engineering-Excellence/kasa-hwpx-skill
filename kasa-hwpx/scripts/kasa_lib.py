@@ -81,6 +81,15 @@ APX_HDR = {
 #   생성하는 것으로 검증됨)
 _LINESEG = ""  # 흐름 문단/표 래퍼/셀 모두 캐시 없이 생성 → 한글이 재계산
 
+# linesegarray 제거용 정규식 — 속성이 붙거나 self-closing(<hp:linesegarray .../>)인
+# 형태까지 포괄한다(참고: Canine89/hwpxskill finalize 가드).
+LINESEG_RE = re.compile(
+    r"<hp:linesegarray\b[^>]*/>|<hp:linesegarray\b[^>]*>.*?</hp:linesegarray>", re.S)
+
+def strip_linesegarray(xml):
+    """XML 문자열에서 줄 위치 캐시(linesegarray)를 모두 제거. (새 문자열, 제거 수) 반환."""
+    return LINESEG_RE.subn("", xml)
+
 # ──────────────────────────────────────────────────────────────────────────
 # 유틸
 # ──────────────────────────────────────────────────────────────────────────
@@ -158,6 +167,21 @@ def write_package(path, parts, order):
             else:
                 z.writestr(name, data, zipfile.ZIP_DEFLATED)
     os.replace(tmp, path)
+
+def write_package_preserving(src_path, out_path, replacements):
+    """서식 보존 편집용 기록: 원본 HWPX의 엔트리 메타데이터(ZipInfo — 순서·시각·
+    압축방식 등)를 그대로 유지하고, replacements({이름: bytes})에 있는 엔트리만
+    새 내용으로 교체한다. 미변경 엔트리는 원본 압축 해제 바이트를 그대로 다시 담는다.
+    (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes' — 한글이 zip 메타데이터에
+    민감할 수 있어, 재기안 등 서식 보존 편집에서는 전체 재구성 대신 이 함수를 쓴다.)"""
+    tmp = out_path + ".tmp"
+    with zipfile.ZipFile(src_path, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
+        for zi in zin.infolist():
+            data = replacements.get(zi.filename)
+            if data is None:
+                data = zin.read(zi.filename)
+            zout.writestr(zi, data)
+    os.replace(tmp, out_path)
 
 # ──────────────────────────────────────────────────────────────────────────
 # 본문 문단/표 빌더
@@ -306,7 +330,7 @@ def _set_field_by_anchor(sec, anchor, value, strip_lineseg=False):
     out.append(para[last:])
     new_para = "".join(out)
     if strip_lineseg:
-        new_para = re.sub(r"<hp:linesegarray>.*?</hp:linesegarray>", "", new_para, flags=re.S)
+        new_para, _ = strip_linesegarray(new_para)
     return sec[:p0] + new_para + sec[p1:]
 
 def _replace_unique_text(sec, old, new):
@@ -386,14 +410,18 @@ def build_report(template_path, spec, out_path):
 # WF-B: 기존 KASA 양식의 플레이스홀더/텍스트 단순 치환 (서식 100% 보존)
 # ──────────────────────────────────────────────────────────────────────────
 def fill_template(template_path, replacements, out_path):
-    parts, order = read_package(template_path)
-    for name in list(parts):
+    parts, _ = read_package(template_path)
+    changed = {}
+    for name in parts:
         if name.startswith("Contents/") and name.endswith(".xml"):
             t = parts[name].decode("utf-8")
             for old, new in replacements.items():
                 t = t.replace(old, xml_escape(new))
-            parts[name] = t.encode("utf-8")
-    write_package(out_path, parts, order)
+            data = t.encode("utf-8")
+            if data != parts[name]:
+                changed[name] = data
+    # 서식 보존 편집: 미변경 엔트리는 원본 ZipInfo 그대로 유지
+    write_package_preserving(template_path, out_path, changed)
     fix_namespaces(out_path)
     return out_path
 
@@ -425,8 +453,9 @@ def extract_text(path):
     for name in sorted(parts):
         if re.match(r"Contents/section\d+\.xml", name):
             xml = parts[name].decode("utf-8")
-            for m in re.finditer(r"<hp:t>(.*?)</hp:t>", xml, re.S):
-                t = (m.group(1).replace("&lt;", "<").replace("&gt;", ">")
+            for m in re.finditer(r"<hp:t(?:\s[^>]*)?>(.*?)</hp:t>", xml, re.S):
+                raw = re.sub(r"<[^>]+>", "", m.group(1))  # 중첩 컨트롤 태그 제거
+                t = (raw.replace("&lt;", "<").replace("&gt;", ">")
                      .replace("&quot;", '"').replace("&amp;", "&")).strip()
                 if t:
                     out.append(t)
