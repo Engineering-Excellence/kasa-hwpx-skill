@@ -14,7 +14,7 @@
 ├── README.md
 ├── 사용설명서.md             # 컴퓨터가 낯선 분을 위한 쉬운 안내서
 ├── .gitignore
-├── build_skill.py            # kasa-hwpx/ → kasa-hwpx.skill 패키징
+├── build_skill.py            # kasa-hwpx/ → kasa-hwpx_v{버전}.skill 패키징
 └── kasa-hwpx/                # 스킬 본체(.skill 내부 구조와 동일)
     ├── SKILL.md              # 스킬 설명·규칙(트리거/Critical Rules)
     ├── assets/               # 기준 양식(SSOT) 및 참고 양식
@@ -57,10 +57,10 @@ python3 kasa-hwpx/scripts/redraft.py --input 원본.hwpx --map repl.json --outpu
 ## 스킬 패키징
 
 ```bash
-python3 build_skill.py        # → dist/kasa-hwpx.skill 생성
+python3 build_skill.py        # → dist/kasa-hwpx_v0.4.1.skill 생성 (버전은 SKILL.md에서 읽음)
 ```
 
-생성된 `kasa-hwpx.skill`을 스킬 디렉터리에 풀어 넣거나 앱의 스킬 가져오기로 등록합니다.
+생성된 `kasa-hwpx_v{버전}.skill`을 스킬 디렉터리에 풀어 넣거나 앱의 스킬 가져오기로 등록합니다.
 
 ## 핵심 설계 메모
 
@@ -74,12 +74,17 @@ python3 build_skill.py        # → dist/kasa-hwpx.skill 생성
 ## 버전 히스토리
 
 커밋은 [Conventional Commits](https://www.conventionalcommits.org), 태그는 [SemVer](https://semver.org)를 따릅니다.
+**현재 버전: `v0.4.1`** (버전의 단일 출처는 `kasa-hwpx/SKILL.md` 프런트매터의 `version` 필드이며,
+빌드 산출물 이름(`dist/kasa-hwpx_v{버전}.skill`)에 자동 반영됩니다.)
 
 - `v0.1.0` feat: 초기 버전 — 생성 엔진·검증기·기준 양식
 - `v0.1.1` fix: 줄겹침(linesegarray) 해결 + 참고 머리 3칸 표 디자인
 - `v0.2.0` feat: 선행 공백 + 내어쓰기 기반 본문 위계
 - `v0.3.0` feat: 항목 간격·긴 제목 2줄·표 내어쓰기 제외·참고 서식 통일
 - `v0.4.0` feat: 재기안(`redraft.py`) — 기존 HWPX 서식 보존 본문 치환 / docs: 쉬운 사용설명서 추가
+- ~~`v0.5.0`~~ **롤백됨** — 업스트림 반영(zip 메타 보존·전 섹션 치환·검증 강화) 중 항목 간 공백·참고
+  서식 소실 결함이 발견되어 main에서 제외. 변경분은 `v0.5.0` 태그로만 보존
+- `v0.4.1` docs/build: MIT LICENSE 명시, 버전 표기 체계·빌드 산출물 버전 네이밍 도입 **(현재)**
 
 ### 커밋 규약
 
