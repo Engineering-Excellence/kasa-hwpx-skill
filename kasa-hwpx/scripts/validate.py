@@ -54,6 +54,15 @@ def validate_structure(path):
         dangling = sorted(used - defined, key=int) if defined else []
         if dangling:
             issues.append(f"{tag} 미정의 참조: {dangling}")
+    # header.xml itemCnt 정합(선언 수 ≠ 실제 정의 수면 스타일 인식 오류 가능)
+    #   (참고: Canine89/hwpxskill fix_namespaces의 itemCnt 보정을 점검으로 포팅)
+    for container, child in [("charProperties", "charPr"), ("paraProperties", "paraPr"),
+                             ("borderFills", "borderFill"), ("styles", "style")]:
+        m = re.search(rf'<hh:{container}\b[^>]*\bitemCnt="(\d+)"', hdr)
+        if m:
+            actual = len(re.findall(rf'<hh:{child}\b', hdr))
+            if actual != int(m.group(1)):
+                issues.append(f"header.xml {container} itemCnt={m.group(1)} ≠ 실제 {actual}")
     return issues
 
 # 검증된 charPr → (글꼴, pt) 매핑
@@ -63,6 +72,33 @@ CP_SPEC = {
     "17": ("맑은 고딕", 12.0),  "31": ("맑은 고딕", 12.0),
     "56": ("함초롬바탕", 24.0), "63": ("HY헤드라인M", 16.0),
 }
+_HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+
+def _weighted_len(text):
+    """전각(비ASCII)=2, 반각=1 가중 길이 — 표 셀 렌더 부담 추정용."""
+    return sum(2 if ord(ch) > 127 else 1 for ch in text)
+
+def _cell_density_warnings(sec_bytes, max_chars=90):
+    """긴 텍스트가 한 문단에 몰린 표 셀을 찾는다(렌더 밀림 위험).
+    (참고: Canine89/hwpxskill finalize_hwpx.find_layout_warnings 경량 포팅)"""
+    warns = []
+    try:
+        root = ET.fromstring(sec_bytes)
+    except ET.ParseError:
+        return warns
+    for tc in root.iter(_HP + "tc"):
+        sub = tc.find(_HP + "subList")
+        if sub is None:
+            continue
+        paras = []
+        for p in sub.findall(_HP + "p"):
+            txt = "".join(t.text or "" for t in p.iter(_HP + "t")).strip()
+            if txt:
+                paras.append(txt)
+        if len(paras) == 1 and _weighted_len(paras[0]) > max_chars:
+            warns.append(paras[0][:40])
+    return warns
+
 def kasa_check(path):
     notes = []
     parts, _ = _parts(path)
@@ -126,9 +162,37 @@ def kasa_check(path):
                 notes.append("[OK] 본문에 자동번호 유발 paraPr 없음")
     except Exception:
         pass
+
+    # 세로쓰기 오변환 탐지: hwp→hwpx 변환기가 textDirection을 VERTICAL로 잘못
+    # 넣는 사고 사례가 보고됨(참고: jkf87/hwpx-skill 세로쓰기 오변환 가드)
+    section_names = [n for n in parts if re.match(r"Contents/section\d+\.xml$", n)]
+    vert = sum(parts[n].decode("utf-8", "ignore").count('textDirection="VERTICAL"')
+               for n in section_names)
+    if vert:
+        notes.append(f"[경고] 세로쓰기(textDirection=\"VERTICAL\") {vert}곳 감지 — "
+                     f"변환 오류 가능성(의도한 세로쓰기인지 확인 필요)")
+    else:
+        notes.append("[OK] 세로쓰기 오변환 없음")
+
+    # 표 셀 과밀 점검: 긴 텍스트가 한 문단에 몰린 셀은 렌더 밀림 위험
+    dense = []
+    for n in section_names:
+        dense += _cell_density_warnings(parts[n])
+    if dense:
+        samples = " / ".join(f"'{s}…'" for s in dense[:3])
+        notes.append(f"[경고] 표 셀 과밀 {len(dense)}곳 — 긴 텍스트가 한 문단에 몰림"
+                     f"(문단·목록 분리 권장): {samples}")
+    else:
+        notes.append("[OK] 표 셀 과밀 없음")
     return notes
 
 def main():
+    # Windows cp949 콘솔 등에서 특수문자 출력 크래시 방지
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(errors="replace")
+        except Exception:
+            pass
     if len(sys.argv) < 2:
         print(__doc__); sys.exit(1)
     path = sys.argv[1]
