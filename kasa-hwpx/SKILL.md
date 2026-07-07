@@ -1,6 +1,6 @@
 ---
 name: kasa-hwpx
-version: 0.5.1
+version: 0.6.0
 description: 우주항공청(KASA) 표준보고서를 한글 HWPX(.hwpx)로 생성·편집·검증하는 스킬. '우주항공청', 'KASA', '우주청 보고서', '표준보고서', '한글 보고서', 'hwpx', '한글파일', '기관 보고서', '대외비 보고서', '누리호 보고서' 등 우주항공청 양식의 한글 문서가 필요할 때 반드시 사용한다. 첨부된 표준양식을 기준(SSOT)으로 표지·MI 로고·편집용지를 그대로 보존하고 본문만 채워 규정에 맞는 보고서를 만든다. 외부 패키지 없이 파이썬 표준 라이브러리만으로 동작한다.
 allowed-tools: Bash(python3 *), Read, Write, Glob, Grep
 ---
@@ -20,11 +20,14 @@ allowed-tools: Bash(python3 *), Read, Write, Glob, Grep
 kasa-hwpx/
 ├── SKILL.md
 ├── scripts/
-│   ├── kasa_lib.py        # ★ 핵심 엔진(표지 치환 + 본문/표/참고 생성)
+│   ├── kasa_lib.py        # ★ 핵심 엔진(표지 치환 + 본문/표/참고 생성 + PrvText 재생성)
 │   ├── build_report.py    # CLI: JSON 사양 / 마커 텍스트 → .hwpx
 │   ├── validate.py        # 구조 + KASA 규정 준수 검증
 │   ├── extract_text.py    # 텍스트 추출
 │   ├── redraft.py         # 재기안: 기존 HWPX 서식 보존 본문 치환
+│   ├── hwpx_edit.py       # in-place 편집: 머리말·꼬리말·쪽번호·표 구조 op
+│   ├── secure_fill.py     # PII 비경유 양식 채우기(detect/fill/verify/shred)
+│   ├── fix_vertical.py    # 세로쓰기 오변환 자동보정(다수결 flip)
 │   └── office/{unpack,pack}.py
 ├── assets/kasa-standard-report.hwpx   # 기준 양식(SSOT)
 └── references/
@@ -38,8 +41,11 @@ kasa-hwpx/
 요청
  ├─ "보고서 만들어줘 / 작성해줘"        → 워크플로우 A (사양→보고서 생성)
  ├─ "이 양식에 내용만 채워줘"           → 워크플로우 B (텍스트 치환/재기안, 서식 100% 보존)
+ │    └─ 개인정보(이름·연락처 등)면      → 워크플로우 B-2 (secure-fill, 값 비노출)
  ├─ "이 hwpx 수정/편집"                 → 워크플로우 C (unpack→편집→pack)
- └─ "이 hwpx 읽어줘/내용 추출"          → 워크플로우 E (텍스트 추출)
+ │    └─ 꼬리말·쪽번호·표 셀/행/열이면    → 워크플로우 D (hwpx_edit in-place, 서식 보존)
+ ├─ "이 hwpx 읽어줘/내용 추출"          → 워크플로우 E (텍스트 추출)
+ └─ "글이 세로로 깨져요/변환 이상"      → fix_vertical.py (오변환 자동보정)
 ```
 
 > **워크플로우 B(재기안) 빠른 실행.** 임의의 기존 HWPX(KASA 여부 무관)의 서식·표·여백을
@@ -116,6 +122,17 @@ python3 scripts/build_report.py --markdown 본문.md --title "보고서 제목" 
 기존 KASA 양식의 특정 문구만 바꿀 때. `kasa_lib.fill_template(template, {old: new}, out)` 사용.
 표지 표 레이아웃까지 원본 그대로 유지된다.
 
+## 워크플로우 B-2: secure-fill (개인정보 비노출 채우기)
+이름·연락처·주민번호 등이 들어가는 양식은 **값을 화면·로그에 노출하지 않는**
+secure-fill을 쓴다. 프로필 JSON: `{"{{이름}}": "홍길동", "{{전화}}": {"value": "01012345678", "format": "phone"}}`
+(format: phone/rrn/date/upper/lower/nospace/digits/mask)
+```bash
+python3 scripts/secure_fill.py detect 양식.hwpx --profile p.json   # 키 적중만 확인
+python3 scripts/secure_fill.py fill   양식.hwpx --profile p.json --output 결과.hwpx
+python3 scripts/secure_fill.py verify 결과.hwpx --profile p.json   # 마스킹 표시로 확인
+python3 scripts/secure_fill.py shred  p.json                       # 프로필 안전 삭제
+```
+
 ## 워크플로우 C: 편집
 ```bash
 python3 scripts/office/unpack.py 문서.hwpx ./unpacked/
@@ -123,6 +140,23 @@ python3 scripts/office/unpack.py 문서.hwpx ./unpacked/
 python3 scripts/office/pack.py ./unpacked/ 수정.hwpx
 python3 scripts/validate.py 수정.hwpx --kasa
 ```
+
+## 워크플로우 D: in-place 편집 (머리말·꼬리말·쪽번호·표, 서식 보존)
+unpack 없이 원본 서식·zip 메타데이터를 보존한 채 편집한다.
+```bash
+python3 scripts/hwpx_edit.py set-footer  문서.hwpx --text "꼬리말" --output 결과.hwpx
+python3 scripts/hwpx_edit.py set-pagenum 문서.hwpx --pos BOTTOM_CENTER --side-char "-" --output 결과.hwpx
+python3 scripts/hwpx_edit.py list-tables 문서.hwpx                  # 표 순번 확인(필수 선행)
+python3 scripts/hwpx_edit.py set-cell    문서.hwpx --table 3 --row 0 --col 0 --bg D9D9D9 --output 결과.hwpx
+python3 scripts/hwpx_edit.py add-col     문서.hwpx --table 3 --at 1 --output 결과.hwpx
+python3 scripts/hwpx_edit.py del-row     문서.hwpx --table 3 --row 2 --output 결과.hwpx
+python3 scripts/hwpx_edit.py merge-cells 문서.hwpx --table 3 --from 0,0 --to 1,0 --output 결과.hwpx
+```
+- `--table`은 문서 순번(1-based, 머리말/꼬리말 내부 표 제외·표지 표 포함) — **반드시 list-tables로 먼저 확인**.
+- 중첩 표를 품은 표는 편집 거부, 병합(span) 표는 구조 op(add-col/del-row/merge-cells) 거부(set-cell은 가능).
+- KASA 문서의 머리말(MI 로고)은 건드리지 않는다 — 꼬리말·쪽번호만 편집.
+- 세로쓰기 오변환(외부 hwp→hwpx 변환 사고)은 `fix_vertical.py --input 원본 --output 보정본`으로
+  다수결(VERTICAL>HORIZONTAL) 자동보정. 부분 세로쓰기는 보호되며 `--force`로만 강제.
 
 ## 워크플로우 E: 읽기/추출
 ```bash
@@ -135,8 +169,9 @@ python3 scripts/validate.py 결과.hwpx --kasa
 ```
 구조 무결성(ZIP/mimetype/XML/secPr/미정의 참조/`itemCnt` 정합)과 KASA 규정(MI·여백·마커 글꼴·표지 요소)을 점검한다.
 `--kasa`는 추가로 **줄겹침 캐시·자동번호 회귀·세로쓰기 오변환(`textDirection="VERTICAL"`)·
-표 셀 과밀(긴 텍스트 한 문단 집중)**을 탐지한다. 셀 과밀 경고가 나오면 해당 셀 내용을
-여러 문단이나 목록으로 나눈다.
+미리보기(PrvText) 본문 미반영·표 셀 과밀(긴 텍스트 한 문단 집중)**을 탐지한다.
+셀 과밀 경고가 나오면 해당 셀 내용을 여러 문단이나 목록으로 나누고,
+세로쓰기 경고는 `fix_vertical.py`로 보정한다.
 
 ## Critical Rules
 1. **HWPX만** 지원(`.hwp` 바이너리 미지원).
@@ -156,7 +191,10 @@ python3 scripts/validate.py 결과.hwpx --kasa
 15. **참고 서식은 본문과 동일.** 참고 본문도 본문과 같은 간격(스페이서)·내어쓰기를 적용한다(`_build_body_xml`의 참고 루프).
 16. **재기안(re-draft)은 `<hp:t>` 단위 치환 + 전체 `linesegarray` 제거.** 기존 HWPX의 서식을 보존한 채 본문만 바꿀 때는 `redraft.py`를 쓴다. charPr/paraPr·표·셀병합·여백은 그대로 두고 텍스트만 교체하며, 치환 후 줄 위치 캐시를 비워 한글이 재계산하도록 한다(규칙 9와 동일 원리). 오치환이 우려되면 `--mode exact`로 `<hp:t>` 전체 일치만 치환한다.
 17. **재기안 XML 가드레일.** `<hp:t>` 안에 컨트롤 태그가 섞인 경우(mixed content) 태그는 건드리지 않고 텍스트 구간에만 치환한다(exact 모드는 해당 노드를 건너뜀). `linesegarray`는 속성·self-closing 형태까지 `LINESEG_RE`로 제거한다. 치환 후 키별 적중 수를 확인해 미적중 키는 사용자에게 알린다. (참고: ai-public-peasant/hwpx-rekian XML guardrails, Canine89/hwpxskill finalize 가드)
-18. **서식 보존 편집은 zip 메타데이터도 보존한다.** 재기안·`fill_template` 등 서식 보존 경로는 `write_package_preserving`으로 기록해, 미변경 엔트리의 원본 ZipInfo(순서·시각·압축방식)를 그대로 유지한다. 한글이 zip 메타데이터에 민감할 수 있기 때문이다. (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes')
+18. **서식 보존 편집은 zip 메타데이터도 보존한다.** 재기안·`fill_template`·`hwpx_edit`·`fix_vertical` 등 서식 보존 경로는 `write_package_preserving`으로 기록해, 미변경 엔트리의 원본 ZipInfo(순서·시각·압축방식)를 그대로 유지한다. 한글이 zip 메타데이터에 민감할 수 있기 때문이다. (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes')
+19. **본문을 바꾸면 미리보기(PrvText)도 함께 갱신한다.** 템플릿의 `Preview/PrvText.txt`를 그대로 두면 탐색기 미리보기·문서 검색에 옛 내용(표준양식 원문)이 노출된다. 빌드·재기안·`fill_template`은 섹션 텍스트로 PrvText를 재생성하며(`refresh_prvtext`, 기존 엔트리가 있을 때만), `validate --kasa`가 미반영을 탐지한다. (참고: jkf87/hwpx-skill `_write_preview`)
+20. **개인정보는 secure-fill로만 채운다.** 이름·연락처·주민번호 등은 값이 화면·로그·예외에 남지 않도록 `secure_fill.py`(detect→fill→verify→shred)를 쓴다. Claude는 대화에 값을 되풀이하지 않고, 작업 후 프로필 파일 shred를 안내한다.
+21. **표 편집 전 list-tables로 순번을 확인한다.** 표 순번은 머리말/꼬리말 내부 표를 제외한 문서 순서(표지 레이아웃 표 포함)다. 중첩 표 포함 표는 편집 금지, span 표는 구조 op 금지 — 가드가 거부하면 사용자에게 이유를 설명한다.
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`
