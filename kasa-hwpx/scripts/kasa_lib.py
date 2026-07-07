@@ -402,6 +402,7 @@ def build_report(template_path, spec, out_path):
     if "Contents/header.xml" in parts:
         hx = parts["Contents/header.xml"].decode("utf-8")
         parts["Contents/header.xml"] = _inject_indent_parapr(hx).encode("utf-8")
+    refresh_prvtext(parts)  # 미리보기에 표준양식 원문이 남지 않도록 본문 반영
     write_package(out_path, parts, order)
     fix_namespaces(out_path)
     return out_path
@@ -420,6 +421,11 @@ def fill_template(template_path, replacements, out_path):
             data = t.encode("utf-8")
             if data != parts[name]:
                 changed[name] = data
+    # 본문이 바뀌었으면 미리보기도 새 본문으로 갱신(기존 엔트리가 있을 때만)
+    if changed:
+        merged = dict(parts); merged.update(changed)
+        if refresh_prvtext(merged):
+            changed[PRVTEXT_NAME] = merged[PRVTEXT_NAME]
     # 서식 보존 편집: 미변경 엔트리는 원본 ZipInfo 그대로 유지
     write_package_preserving(template_path, out_path, changed)
     fix_namespaces(out_path)
@@ -447,19 +453,47 @@ def fix_namespaces(path):
 # ──────────────────────────────────────────────────────────────────────────
 # 텍스트 추출
 # ──────────────────────────────────────────────────────────────────────────
+def _section_text_lines(parts):
+    """모든 섹션(section0..N)의 <hp:t> 텍스트를 문서 순서대로 나열한다."""
+    out = []
+    for name in sorted(n for n in parts if re.match(r"Contents/section\d+\.xml$", n)):
+        xml = parts[name].decode("utf-8", "ignore")
+        for m in re.finditer(r"<hp:t(?:\s[^>]*)?>(.*?)</hp:t>", xml, re.S):
+            raw = re.sub(r"<[^>]+>", "", m.group(1))  # 중첩 컨트롤 태그 제거
+            t = (raw.replace("&lt;", "<").replace("&gt;", ">")
+                 .replace("&quot;", '"').replace("&amp;", "&")).strip()
+            if t:
+                out.append(t)
+    return out
+
 def extract_text(path):
     parts, _ = read_package(path)
-    out = []
-    for name in sorted(parts):
-        if re.match(r"Contents/section\d+\.xml", name):
-            xml = parts[name].decode("utf-8")
-            for m in re.finditer(r"<hp:t(?:\s[^>]*)?>(.*?)</hp:t>", xml, re.S):
-                raw = re.sub(r"<[^>]+>", "", m.group(1))  # 중첩 컨트롤 태그 제거
-                t = (raw.replace("&lt;", "<").replace("&gt;", ">")
-                     .replace("&quot;", '"').replace("&amp;", "&")).strip()
-                if t:
-                    out.append(t)
-    return "\n".join(out)
+    return "\n".join(_section_text_lines(parts))
+
+# ──────────────────────────────────────────────────────────────────────────
+# 미리보기 텍스트(Preview/PrvText.txt) 재생성
+#   본문을 바꾸고 템플릿의 PrvText를 그대로 두면 탐색기 미리보기·문서 검색에
+#   표준양식 원문이 노출된다. 본문 기반으로 다시 만든다.
+#   (참고: jkf87/hwpx-skill build_hwpx._write_preview)
+# ──────────────────────────────────────────────────────────────────────────
+PRVTEXT_NAME = "Preview/PrvText.txt"
+PRVTEXT_LIMIT = 4096  # 미리보기 용도 상한(문자 수) — 한글이 재저장 시 갱신
+
+def make_prvtext(parts):
+    """섹션 본문 텍스트로 PrvText 바이트(UTF-8)를 만든다."""
+    text = "\r\n".join(_section_text_lines(parts))[:PRVTEXT_LIMIT]
+    return text.encode("utf-8")
+
+def refresh_prvtext(parts):
+    """parts에 PrvText 엔트리가 있으면 본문 기반으로 교체(새 엔트리는 만들지 않음).
+    반환: 교체 여부."""
+    if PRVTEXT_NAME not in parts:
+        return False
+    new = make_prvtext(parts)
+    if new == parts[PRVTEXT_NAME]:
+        return False
+    parts[PRVTEXT_NAME] = new
+    return True
 
 
 if __name__ == "__main__":

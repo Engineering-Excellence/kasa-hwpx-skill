@@ -174,6 +174,24 @@ def kasa_check(path):
     else:
         notes.append("[OK] 세로쓰기 오변환 없음")
 
+    # 미리보기(PrvText) 반영 점검: 본문과 무관한 PrvText(예: 표준양식 원문)가 남아
+    # 있으면 탐색기 미리보기·문서 검색에 옛 내용이 노출된다.
+    prv = parts.get("Preview/PrvText.txt")
+    if prv is not None:
+        body_text = "\n".join(
+            re.sub(r"<[^>]+>", "", m.group(1)).strip()
+            for n in section_names
+            for m in re.finditer(r"<hp:t(?:\s[^>]*)?>(.*?)</hp:t>",
+                                 parts[n].decode("utf-8", "ignore"), re.S))
+        prv_lines = [ln.strip().strip("<>").strip()
+                     for ln in prv.decode("utf-8", "ignore").splitlines()]
+        prv_lines = [ln for ln in prv_lines if len(ln) >= 4]
+        if prv_lines and not any(ln in body_text for ln in prv_lines):
+            notes.append("[경고] 미리보기(PrvText)가 본문을 반영하지 않음 — "
+                         "빌드/재기안 시 갱신 필요(옛 내용이 미리보기에 노출됨)")
+        else:
+            notes.append("[OK] 미리보기(PrvText) 본문 반영")
+
     # 표 셀 과밀 점검: 긴 텍스트가 한 문단에 몰린 셀은 렌더 밀림 위험
     dense = []
     for n in section_names:

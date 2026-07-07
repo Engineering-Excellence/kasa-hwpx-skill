@@ -114,6 +114,13 @@ def redraft(input_path, replacements, output_path, mode="contains"):
         if new_sec != sec:
             new_parts[name] = new_sec.encode("utf-8")
 
+    # 본문이 바뀌었으면 미리보기(PrvText)도 새 본문으로 갱신(기존 엔트리가 있을 때만)
+    if new_parts:
+        merged = dict(parts)
+        merged.update(new_parts)
+        if K.refresh_prvtext(merged):
+            new_parts[K.PRVTEXT_NAME] = merged[K.PRVTEXT_NAME]
+
     # 미변경 엔트리는 원본 zip 메타데이터 그대로 유지(서식 보존 기록)
     K.write_package_preserving(input_path, output_path, new_parts)
     K.fix_namespaces(output_path)
