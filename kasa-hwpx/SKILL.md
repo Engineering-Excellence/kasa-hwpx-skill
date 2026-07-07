@@ -26,6 +26,8 @@ kasa-hwpx/
 │   ├── kasa_lint.py       # 표기법 lint(날짜·시간·숫자·항목 기호·위계)
 │   ├── extract_text.py    # 텍스트 추출
 │   ├── redraft.py         # 재기안: 기존 HWPX 서식 보존 본문 치환
+│   ├── hwpx_diff.py       # 신구대조: 두 HWPX 문단·표 셀 diff(읽기 전용)
+│   ├── label_fill.py      # 라벨 기반 양식 채우기("성명:" 옆 빈 셀 자동 입력)
 │   ├── hwpx_edit.py       # in-place 편집: 머리말·꼬리말·쪽번호·표 구조 op
 │   ├── hwpx_image.py      # 직인/서명 등 이미지 삽입·교체·삭제(BinData+manifest+pic)
 │   ├── secure_fill.py     # PII 비경유 양식 채우기(detect/fill/verify/shred)
@@ -47,7 +49,9 @@ kasa-hwpx/
 요청
  ├─ "보고서 만들어줘 / 작성해줘"        → 워크플로우 A (사양→보고서 생성)
  ├─ "이 양식에 내용만 채워줘"           → 워크플로우 B (텍스트 치환/재기안, 서식 100% 보존)
- │    └─ 개인정보(이름·연락처 등)면      → 워크플로우 B-2 (secure-fill, 값 비노출)
+ │    ├─ 개인정보(이름·연락처 등)면      → 워크플로우 B-2 (secure-fill, 값 비노출)
+ │    └─ {{자리표시자}} 없는 표 양식이면 → 워크플로우 B-3 (label_fill, 라벨 옆 빈 셀)
+ ├─ "구버전과 뭐가 달라졌어?"           → 신구대조 (hwpx_diff.py, 읽기 전용)
  ├─ "이 hwpx 수정/편집"                 → 워크플로우 C (unpack→편집→pack)
  │    ├─ 꼬리말·쪽번호·표 셀/행/열이면    → 워크플로우 D (hwpx_edit in-place, 서식 보존)
  │    └─ 직인·서명·이미지면              → 워크플로우 D-2 (hwpx_image in-place, 서식 보존)
@@ -140,6 +144,24 @@ python3 scripts/secure_fill.py verify 결과.hwpx --profile p.json   # 마스킹
 python3 scripts/secure_fill.py shred  p.json                       # 프로필 안전 삭제
 ```
 
+## 워크플로우 B-3: 라벨 기반 양식 채우기
+`{{자리표시자}}`가 없는 관공서 표 양식에서 "성명:" 같은 라벨 셀을 찾아
+오른쪽(없으면 아래) **빈 셀**에 값을 넣는다. 빈 셀에 텍스트만 기록하며(구조 창작 없음),
+이미 값이 있는 셀은 덮어쓰지 않고 미적중으로 보고한다.
+```bash
+python3 scripts/label_fill.py detect 양식.hwpx                        # 라벨·채울 위치 미리보기(선행)
+python3 scripts/label_fill.py fill   양식.hwpx --data d.json --output 결과.hwpx
+# d.json 예: {"성명": "홍길동", "소속": "우주수송정책과"}  (콜론·공백 차이 무시 대조)
+```
+개인정보 값은 B-2(secure-fill)를 사용한다 — label_fill은 값을 출력에 표시한다.
+
+## 신구대조 (문서 비교, 읽기 전용)
+재기안 전후 검수: 두 HWPX의 문단·표 셀 단위 차이를 보고한다(원본 무수정).
+```bash
+python3 scripts/hwpx_diff.py 구버전.hwpx 신버전.hwpx           # 추가/삭제/수정 + 셀 diff
+python3 scripts/hwpx_diff.py 구버전.hwpx 신버전.hwpx --stats   # 통계 한 줄
+```
+
 ## 워크플로우 C: 편집
 ```bash
 python3 scripts/office/unpack.py 문서.hwpx ./unpacked/
@@ -197,9 +219,10 @@ python3 scripts/validate.py 결과.hwpx --kasa
 
 **표기법 lint** (`kasa_lint.py`, 단독 실행 시 `--strict`로 경고를 실패 처리):
 날짜 `2026. 7. 7.`(온점+공백, 앞 0 제거, 일 뒤 온점 — `’YY.MM.DD.` 축약형은 허용),
-시간 24시각제 쌍점(`14:30`), 4자리 이상 숫자의 천 단위 쉼표(연도 제외),
-항목 기호 □/ㅇ/-/※/* 위계(○·●·■ 등 유사 기호와 ㅇ 항목이 □보다 먼저 나오는 역전 탐지),
-물결표(~) 앞뒤 붙여쓰기. **경고가 나오면 본문 사양의 표기를 고쳐 재생성한다.**
+요일 괄호는 날짜에 붙임(`7. 7.(화)`), 시간 24시각제 쌍점·두 자리(`08:09`, 날짜와 반대),
+4자리 이상 숫자의 천 단위 쉼표(연도 제외), 항목 기호 □/ㅇ/-/※/* 위계(유사 기호·역전 탐지),
+물결표(`~`·`∼`) 앞뒤 붙여쓰기, 쌍점 뒤 한 칸 띄움(`원장: 김갑동`).
+**경고가 나오면 본문 사양의 표기를 고쳐 재생성한다.**
 
 ## 가드 훅 (선택 설치 권장)
 `hooks/`의 PreToolUse 훅 3종을 `.claude/settings.json`에 등록하면(방법: `hooks/README.md`)
