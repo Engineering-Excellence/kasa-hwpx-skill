@@ -22,7 +22,8 @@ kasa-hwpx/
 ├── scripts/
 │   ├── kasa_lib.py        # ★ 핵심 엔진(표지 치환 + 본문/표/참고 생성 + PrvText 재생성)
 │   ├── build_report.py    # CLI: JSON 사양 / 마커 텍스트 → .hwpx
-│   ├── validate.py        # 구조 + KASA 규정 준수 검증
+│   ├── validate.py        # 구조 + KASA 규정 준수 검증(표기법 lint 통합)
+│   ├── kasa_lint.py       # 표기법 lint(날짜·시간·숫자·항목 기호·위계)
 │   ├── extract_text.py    # 텍스트 추출
 │   ├── redraft.py         # 재기안: 기존 HWPX 서식 보존 본문 치환
 │   ├── hwpx_edit.py       # in-place 편집: 머리말·꼬리말·쪽번호·표 구조 op
@@ -169,9 +170,15 @@ python3 scripts/validate.py 결과.hwpx --kasa
 ```
 구조 무결성(ZIP/mimetype/XML/secPr/미정의 참조/`itemCnt` 정합)과 KASA 규정(MI·여백·마커 글꼴·표지 요소)을 점검한다.
 `--kasa`는 추가로 **줄겹침 캐시·자동번호 회귀·세로쓰기 오변환(`textDirection="VERTICAL"`)·
-미리보기(PrvText) 본문 미반영·표 셀 과밀(긴 텍스트 한 문단 집중)**을 탐지한다.
+미리보기(PrvText) 본문 미반영·표 셀 과밀(긴 텍스트 한 문단 집중)·표기법 lint**를 탐지한다.
 셀 과밀 경고가 나오면 해당 셀 내용을 여러 문단이나 목록으로 나누고,
 세로쓰기 경고는 `fix_vertical.py`로 보정한다.
+
+**표기법 lint** (`kasa_lint.py`, 단독 실행 시 `--strict`로 경고를 실패 처리):
+날짜 `2026. 7. 7.`(온점+공백, 앞 0 제거, 일 뒤 온점 — `’YY.MM.DD.` 축약형은 허용),
+시간 24시각제 쌍점(`14:30`), 4자리 이상 숫자의 천 단위 쉼표(연도 제외),
+항목 기호 □/ㅇ/-/※/* 위계(○·●·■ 등 유사 기호와 ㅇ 항목이 □보다 먼저 나오는 역전 탐지),
+물결표(~) 앞뒤 붙여쓰기. **경고가 나오면 본문 사양의 표기를 고쳐 재생성한다.**
 
 ## Critical Rules
 1. **HWPX만** 지원(`.hwp` 바이너리 미지원).

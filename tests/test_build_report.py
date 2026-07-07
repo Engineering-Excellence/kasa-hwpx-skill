@@ -30,7 +30,7 @@ class TestBuildReport(unittest.TestCase):
         text = K.extract_text(self.out)
         for expected in ["누리호 4차 발사 준비현황 보고", "□ 추진 배경",
                          "ㅇ 신뢰성 확보 및 우주수송 역량 강화", "발사 일정",
-                         "2027.03", "참고 1", "발사체 제원"]:
+                         "2027. 3.", "참고 1", "발사체 제원"]:
             self.assertIn(expected, text)
 
     def test_annotations_removed(self):
