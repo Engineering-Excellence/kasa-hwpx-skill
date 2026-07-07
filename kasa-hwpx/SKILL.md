@@ -27,6 +27,7 @@ kasa-hwpx/
 │   ├── extract_text.py    # 텍스트 추출
 │   ├── redraft.py         # 재기안: 기존 HWPX 서식 보존 본문 치환
 │   ├── hwpx_edit.py       # in-place 편집: 머리말·꼬리말·쪽번호·표 구조 op
+│   ├── hwpx_image.py      # 직인/서명 등 이미지 삽입·교체·삭제(BinData+manifest+pic)
 │   ├── secure_fill.py     # PII 비경유 양식 채우기(detect/fill/verify/shred)
 │   ├── fix_vertical.py    # 세로쓰기 오변환 자동보정(다수결 flip)
 │   └── office/{unpack,pack}.py
@@ -48,7 +49,8 @@ kasa-hwpx/
  ├─ "이 양식에 내용만 채워줘"           → 워크플로우 B (텍스트 치환/재기안, 서식 100% 보존)
  │    └─ 개인정보(이름·연락처 등)면      → 워크플로우 B-2 (secure-fill, 값 비노출)
  ├─ "이 hwpx 수정/편집"                 → 워크플로우 C (unpack→편집→pack)
- │    └─ 꼬리말·쪽번호·표 셀/행/열이면    → 워크플로우 D (hwpx_edit in-place, 서식 보존)
+ │    ├─ 꼬리말·쪽번호·표 셀/행/열이면    → 워크플로우 D (hwpx_edit in-place, 서식 보존)
+ │    └─ 직인·서명·이미지면              → 워크플로우 D-2 (hwpx_image in-place, 서식 보존)
  ├─ "이 hwpx 읽어줘/내용 추출"          → 워크플로우 E (텍스트 추출)
  └─ "글이 세로로 깨져요/변환 이상"      → fix_vertical.py (오변환 자동보정)
 ```
@@ -162,6 +164,21 @@ python3 scripts/hwpx_edit.py merge-cells 문서.hwpx --table 3 --from 0,0 --to 1
 - KASA 문서의 머리말(MI 로고)은 건드리지 않는다 — 꼬리말·쪽번호만 편집.
 - 세로쓰기 오변환(외부 hwp→hwpx 변환 사고)은 `fix_vertical.py --input 원본 --output 보정본`으로
   다수결(VERTICAL>HORIZONTAL) 자동보정. 부분 세로쓰기는 보호되며 `--force`로만 강제.
+
+## 워크플로우 D-2: 이미지(직인/서명) in-place 편집
+BinData 등록·content.hpf manifest·`<hp:pic>` 앵커 삽입을 한 번에 처리한다(png/jpg/gif/bmp).
+```bash
+python3 scripts/hwpx_image.py list    문서.hwpx                      # id·참조 수 확인(선행 권장)
+python3 scripts/hwpx_image.py add     문서.hwpx --image 직인.png --anchor "(직인)" \
+                                      --replace-anchor --width-mm 20 --output 결과.hwpx
+python3 scripts/hwpx_image.py replace 문서.hwpx --id image2 --image 새직인.png --output 결과.hwpx
+python3 scripts/hwpx_image.py remove  문서.hwpx --id image2 --output 결과.hwpx
+```
+- `add`는 `--anchor` 텍스트가 있는 문단에 글자취급(treatAsChar) 그림을 넣는다.
+  `--replace-anchor`는 앵커 문구를 지우고 그 자리에 삽입(양식의 "(직인)" 자리 채움).
+  크기 미지정 시 원본 픽셀(96dpi) 크기, 한 변만 지정하면 비율 유지.
+- `replace`는 표시 크기를 유지한 채 BinData 바이트와 원본 크기 메타를 갱신한다(직인 갱신).
+- `remove`는 머리말/꼬리말 안 그림(KASA MI 로고)을 `--force` 없이 거부한다.
 
 ## 워크플로우 E: 읽기/추출
 ```bash

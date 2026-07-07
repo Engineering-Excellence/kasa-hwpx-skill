@@ -168,19 +168,26 @@ def write_package(path, parts, order):
                 z.writestr(name, data, zipfile.ZIP_DEFLATED)
     os.replace(tmp, path)
 
-def write_package_preserving(src_path, out_path, replacements):
+def write_package_preserving(src_path, out_path, replacements,
+                             additions=None, removals=None):
     """서식 보존 편집용 기록: 원본 HWPX의 엔트리 메타데이터(ZipInfo — 순서·시각·
     압축방식 등)를 그대로 유지하고, replacements({이름: bytes})에 있는 엔트리만
     새 내용으로 교체한다. 미변경 엔트리는 원본 압축 해제 바이트를 그대로 다시 담는다.
+    additions({이름: bytes})는 원본에 없던 엔트리를 끝에 추가하고(이미지 삽입 등),
+    removals(이름 집합)는 해당 엔트리를 제외한다.
     (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes' — 한글이 zip 메타데이터에
     민감할 수 있어, 재기안 등 서식 보존 편집에서는 전체 재구성 대신 이 함수를 쓴다.)"""
     tmp = out_path + ".tmp"
     with zipfile.ZipFile(src_path, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
         for zi in zin.infolist():
+            if removals and zi.filename in removals:
+                continue
             data = replacements.get(zi.filename)
             if data is None:
                 data = zin.read(zi.filename)
             zout.writestr(zi, data)
+        for name, data in (additions or {}).items():
+            zout.writestr(name, data, zipfile.ZIP_DEFLATED)
     os.replace(tmp, out_path)
 
 # ──────────────────────────────────────────────────────────────────────────
