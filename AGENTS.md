@@ -77,8 +77,11 @@ python3 -m unittest discover -s tests    # 94개 통과 확인 후 작업 시작
 ## 6. 업스트림 동기화
 
 관찰 대상과 마지막 확인 커밋은 `BACKLOG.md`의 표가 SSOT다(그 이후 커밋만 조사하면 된다).
-대상: `jkf87/hwpx-skill`, `Canine89/hwpxskill`, `ai-public-peasant/hwpx-rekian`.
+대상: `jkf87/hwpx-skill`, `Canine89/hwpxskill`, `ai-public-peasant/hwpx-rekian`,
+`chrisryugj/kordoc`(TS/Node — 아이디어 단위만 이식).
 반영 판단 기준: KASA 표준양식 스코프에 맞는가(양식 고정 — 수식·차트·문서유형 확장은 제외 판단됨).
+**주간 자동 관찰:** 클라우드 루틴이 매주 화 09:07(KST) 재관찰해 보고한다(BACKLOG 표 위 안내
+참고) — 에이전트가 수동 재관찰을 중복 수행할 필요 없고, 반영 작업만 사용자 세션에서 한다.
 
 ## 7. 하지 말 것
 
