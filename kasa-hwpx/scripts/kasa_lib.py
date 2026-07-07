@@ -31,7 +31,10 @@ import os, re, io, json, zipfile, random
 INDENT_PARAPR = [("22", "3", 0, -3000), ("23", "3", 0, -3750),
                  ("24", "3", 0, -4800), ("25", "3", 0, -4200),
                  # 표 셀: 원본 13/14/17은 intent=-2440(내어쓰기) → 0으로 복제(표 내부 내어쓰기 금지)
-                 ("26", "13", 0, 0), ("27", "14", 0, 0), ("28", "17", 0, 0)]
+                 ("26", "13", 0, 0), ("27", "14", 0, 0), ("28", "17", 0, 0),
+                 # 표 데이터 텍스트 셀: 17(RIGHT) 복제 + 정렬을 JUSTIFY로 오버라이드
+                 #   (숫자만 우측 정렬, 일반 텍스트는 기본 정렬 — 5번째 요소가 정렬 강제값)
+                 ("29", "17", 0, 0, "JUSTIFY")]
 
 # 항목 앞 간격(빈 줄 스페이서) — 첨부 양식과 동일: □ 15pt, ㅇ 10pt, - 5pt, ※/* 3pt, 표 5pt.
 #   빈 문단의 글자높이(charPr)로 간격을 만든다(우리 템플릿: 1500=15,1000=1,500=18,300=22).
@@ -57,7 +60,8 @@ TBL_COLS_3 = [13893, 18987, 14742]
 TBL_TITLE = {"bf": "8",  "pp": "26", "cp": "9"}    # 제목행(병합) 13pt bold (무내어쓰기)
 TBL_HEAD  = {"bf": "11", "pp": "27", "cp": "17"}   # 머리행 12pt bold, 음영 (무내어쓰기)
 TBL_LABEL = {"bf": "3",  "pp": "27", "cp": "17"}   # 데이터행 첫 칸(구분) 12pt bold (무내어쓰기)
-TBL_DATA  = {"bf": "3",  "pp": "28", "cp": "31"}   # 데이터 셀 12pt (무내어쓰기)
+TBL_DATA  = {"bf": "3",  "pp": "28", "cp": "31"}   # 데이터 셀(숫자) 12pt 우측 정렬
+TBL_DATA_TXT = {"bf": "3", "pp": "29", "cp": "31"}  # 데이터 셀(텍스트) 12pt 기본(양쪽) 정렬
 
 # 참고/붙임 — 머리 디자인(좌측 남색 박스 + 굵은 밑줄 제목칸 3칸 표)
 #   표준양식 검증 ID로만 구성:
@@ -121,7 +125,7 @@ def _inject_indent_parapr(header_xml):
     if all(f'<hh:paraPr id="{pid}"' in header_xml for pid, *_ in INDENT_PARAPR):
         return header_xml
     clones = []
-    for pid, src, left, intent in INDENT_PARAPR:
+    for pid, src, left, intent, *align in INDENT_PARAPR:
         if f'<hh:paraPr id="{pid}"' in header_xml:
             continue
         m = re.search(rf'<hh:paraPr id="{src}".*?</hh:paraPr>', header_xml, re.S)
@@ -131,6 +135,9 @@ def _inject_indent_parapr(header_xml):
         # 여백 left·내어쓰기 intent를 원본 값과 무관하게 강제 설정(hp:case·hp:default 모두)
         c = re.sub(r'(<hc:left value=")-?\d+(")', rf'\g<1>{left}\g<2>', c)
         c = re.sub(r'(<hc:intent value=")-?\d+(")', rf'\g<1>{intent}\g<2>', c)
+        if align:  # 정렬 강제값이 있으면 가로 정렬 오버라이드(예: 29 → JUSTIFY)
+            c = re.sub(r'(<hh:align horizontal=")[^"]*(")',
+                       rf'\g<1>{align[0]}\g<2>', c)
         clones.append(c)
     if not clones:
         return header_xml
@@ -225,8 +232,30 @@ def _cell(text, col, row, colspan, style, w, h=282, header="0"):
             f'<hp:cellSz width="{w}" height="{h}"/>'
             f'<hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>')
 
+# 표 데이터 셀 지표(charPr 17/31 = 12pt): 전각 1200·반각 600, 줄간격 160% → 1920
+_TBL_PT_UNIT = 1200
+_TBL_LINE_H = int(_TBL_PT_UNIT * 1.6)
+_CELL_HPAD = 510 * 2   # cellMargin 좌+우
+_CELL_VPAD = 141 * 2   # cellMargin 상+하
+# 숫자 셀 판별: 숫자와 부호·쉼표·마침표·%·괄호·물결·증감 화살표만으로 구성(숫자 1개 이상)
+_NUM_CELL_RE = re.compile(r"^[0-9%.,()+±~〜↑↓\s\-−]*[0-9][0-9%.,()+±~〜↑↓\s\-−]*$")
+
+
+def _is_numeric_cell(text):
+    return bool(_NUM_CELL_RE.match(text.strip()))
+
+
+def _cell_lines(text, width):
+    """셀 폭 대비 예상 줄 수(전각2/반각1 가중) — 행 높이 동일화 산정용."""
+    inner = max(width - _CELL_HPAD, _TBL_PT_UNIT)
+    units = sum(_TBL_PT_UNIT if ord(ch) > 127 else _TBL_PT_UNIT // 2 for ch in text)
+    return max(1, -(-units // inner))
+
+
 def make_table(headers, rows, title=None):
-    """KASA 표준 표 생성. headers: [str], rows: [[str,...]], title: 선택."""
+    """KASA 표준 표 생성. headers: [str], rows: [[str,...]], title: 선택.
+    데이터 셀은 숫자만 우측 정렬(텍스트는 기본 정렬), 데이터 행 높이는
+    표 안에서 가장 긴 셀의 줄 수 기준으로 전 행 동일하게 선언한다."""
     ncols = len(headers)
     if ncols == 0:
         raise ValueError("표에는 최소 1개 이상의 열 머리글이 필요합니다.")
@@ -236,6 +265,13 @@ def make_table(headers, rows, title=None):
     widths = TBL_COLS_3[:] if ncols == 3 else \
              [TBL_TOTAL_W // ncols] * (ncols - 1) + [TBL_TOTAL_W - (TBL_TOTAL_W // ncols) * (ncols - 1)]
 
+    # 데이터 행 높이 동일화: 줄바꿈이 없으면 기존 282(최소 높이) 유지,
+    # 접히는 셀이 있으면 모든 데이터 행을 최대 줄 수 높이로 통일(한글은 선언 높이를
+    # 최소 높이로 취급해 짧은 행도 같은 높이로 렌더 — vertAlign=CENTER로 세로 중앙)
+    data_lines = max((_cell_lines(str(v), widths[c])
+                      for row in rows for c, v in enumerate(row)), default=1)
+    data_h = 282 if data_lines == 1 else data_lines * _TBL_LINE_H + _CELL_VPAD
+
     trs, r = [], 0
     if title:
         trs.append('<hp:tr>' + _cell(title, 0, r, ncols, TBL_TITLE, TBL_TOTAL_W, 300, "1") + '</hp:tr>')
@@ -243,12 +279,13 @@ def make_table(headers, rows, title=None):
     # 머리행
     cells = "".join(_cell(h, c, r, 1, TBL_HEAD, widths[c], 282, "1") for c, h in enumerate(headers))
     trs.append('<hp:tr>' + cells + '</hp:tr>'); r += 1
-    # 데이터행 (첫 칸은 구분 라벨 → bold)
+    # 데이터행 (첫 칸은 구분 라벨 → bold, 숫자 셀만 우측 정렬)
     for row in rows:
         cells = ""
         for c, v in enumerate(row):
-            style = TBL_LABEL if c == 0 else TBL_DATA
-            cells += _cell(v, c, r, 1, style, widths[c], 282, "0")
+            style = TBL_LABEL if c == 0 else \
+                (TBL_DATA if _is_numeric_cell(str(v)) else TBL_DATA_TXT)
+            cells += _cell(v, c, r, 1, style, widths[c], data_h, "0")
         trs.append('<hp:tr>' + cells + '</hp:tr>'); r += 1
 
     rowcnt = r

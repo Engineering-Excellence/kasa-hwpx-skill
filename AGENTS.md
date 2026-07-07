@@ -26,7 +26,7 @@
 | --- | --- |
 | `BACKLOG.md` | **잔여 작업·제외 판단·업스트림 관찰 시점(커밋 SHA)** — 이어서 할 일은 여기부터 |
 | `README.md` | 프로젝트 소개·사용법·**버전 이력**(릴리스 때 갱신) |
-| `kasa-hwpx/SKILL.md` | 스킬 규칙 전문(Critical Rules 1~21)·**버전 필드(단일 출처)** |
+| `kasa-hwpx/SKILL.md` | 스킬 규칙 전문(Critical Rules 1~22)·**버전 필드(단일 출처)** |
 | `kasa-hwpx/references/` | 양식 규격·스타일 ID 맵·XML 구조 — 스타일 값은 여기 있는 것만 사용 |
 | `kasa-hwpx/hooks/README.md` | Claude Code 가드 훅 등록 방법 |
 | `사용설명서.md` | 비개발자용 안내 — **사용자 기능이 추가되면 여기도 함께 갱신** |

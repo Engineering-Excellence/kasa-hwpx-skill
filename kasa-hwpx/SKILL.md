@@ -220,7 +220,7 @@ python3 scripts/validate.py 결과.hwpx --kasa
 10. **참고/붙임 머리는 3칸 표 디자인**을 사용한다 — 좌측 남색 박스(`borderFill 16`+`charPr 2` 흰색 16pt) + 간격칸(`borderFill 1` 무테) + 굵은 밑줄 제목칸(`borderFill 17`+`charPr 63` 검정 16pt). 엔진의 `make_appendix_header(label, heading)`가 생성한다.
 11. **본문 위계 = 선행 공백(항목 시작) + 내어쓰기(2줄 이상).** HWP 내어쓰기 모델은 '첫 줄 시작 = 왼쪽여백(left), 나머지 줄 시작 = left + |intent|'이다. **첫 줄 시작은 반드시 0(left=0)**, 마커 위치는 선행 공백으로만 조정(□=0, ㅇ=1, -=3, ※=5칸). 2줄 이상일 때만 **나머지 줄 시작(|intent|)**을 첫 글자에 맞춘다(한글=전각1em·ASCII=반각0.5em 기준 em 배수: content 3000, sub 3750, note 4800, footnote 4200). 빌드 시 무번호 paraPr 22~25를 주입.
 12. **항목 앞 간격(빈 줄)은 첨부 참고 양식과 동일.** 항목 앞에 빈 문단(스페이서)을 넣어 간격을 준다: □ 15pt, ㅇ 10pt, - 5pt, ※/* 3pt, 표 5pt(빈 문단의 글자높이로 간격 크기 결정). 문서 첫 항목 앞에는 넣지 않는다(`SPACER_CP`, `_spacer`). 기준은 `assets/reference-form-spacing.hwpx`.
-13. **표 내부는 내어쓰기 금지.** 표 셀 원본 paraPr(13/14/17)은 intent=-2440(내어쓰기)이므로, intent=0으로 복제한 paraPr 26/27/28을 주입해 표에 사용한다(`INDENT_PARAPR`, `TBL_*`).
+13. **표 내부는 내어쓰기 금지.** 표 셀 원본 paraPr(13/14/17)은 intent=-2440(내어쓰기)이므로, intent=0으로 복제한 paraPr 26/27/28/29를 주입해 표에 사용한다(`INDENT_PARAPR`, `TBL_*`). 29는 17(RIGHT)의 정렬을 JUSTIFY로 오버라이드한 텍스트 데이터 셀용.
 14. **긴 제목은 2줄 허용.** 표지 제목 문단의 줄위치 캐시(linesegarray)를 제거해 한글이 재계산하도록 한다(긴 제목 자동 2줄). `_set_field_by_anchor(..., strip_lineseg=True)`.
 15. **참고 서식은 본문과 동일.** 참고 본문도 본문과 같은 간격(스페이서)·내어쓰기를 적용한다(`_build_body_xml`의 참고 루프).
 16. **재기안(re-draft)은 `<hp:t>` 단위 치환 + 전체 `linesegarray` 제거.** 기존 HWPX의 서식을 보존한 채 본문만 바꿀 때는 `redraft.py`를 쓴다. charPr/paraPr·표·셀병합·여백은 그대로 두고 텍스트만 교체하며, 치환 후 줄 위치 캐시를 비워 한글이 재계산하도록 한다(규칙 9와 동일 원리). 오치환이 우려되면 `--mode exact`로 `<hp:t>` 전체 일치만 치환한다.
@@ -228,7 +228,8 @@ python3 scripts/validate.py 결과.hwpx --kasa
 18. **서식 보존 편집은 zip 메타데이터도 보존한다.** 재기안·`fill_template`·`hwpx_edit`·`fix_vertical` 등 서식 보존 경로는 `write_package_preserving`으로 기록해, 미변경 엔트리의 원본 ZipInfo(순서·시각·압축방식)를 그대로 유지한다. 한글이 zip 메타데이터에 민감할 수 있기 때문이다. (참고: Canine89/hwpxskill 'Preserve HWPX XML bytes')
 19. **본문을 바꾸면 미리보기(PrvText)도 함께 갱신한다.** 템플릿의 `Preview/PrvText.txt`를 그대로 두면 탐색기 미리보기·문서 검색에 옛 내용(표준양식 원문)이 노출된다. 빌드·재기안·`fill_template`은 섹션 텍스트로 PrvText를 재생성하며(`refresh_prvtext`, 기존 엔트리가 있을 때만), `validate --kasa`가 미반영을 탐지한다. (참고: jkf87/hwpx-skill `_write_preview`)
 20. **개인정보는 secure-fill로만 채운다.** 이름·연락처·주민번호 등은 값이 화면·로그·예외에 남지 않도록 `secure_fill.py`(detect→fill→verify→shred)를 쓴다. Claude는 대화에 값을 되풀이하지 않고, 작업 후 프로필 파일 shred를 안내한다.
-21. **표 편집 전 list-tables로 순번을 확인한다.** 표 순번은 머리말/꼬리말 내부 표를 제외한 문서 순서(표지 레이아웃 표 포함)다. 중첩 표 포함 표는 편집 금지, span 표는 구조 op 금지 — 가드가 거부하면 사용자에게 이유를 설명한다.
+21. **표 데이터 셀은 숫자만 우측 정렬, 행 높이는 표 안에서 동일하게.** 숫자(쉼표·%·부호 포함)로만 된 셀은 paraPr 28(우측), 일반 텍스트 셀은 paraPr 29(기본 정렬)를 쓴다(`_is_numeric_cell`). 데이터 행 선언 높이는 셀 폭 대비 예상 줄 수(전각 1200·반각 600, 줄간격 160%)의 표 내 최댓값으로 전 행 통일한다 — 접히는 셀이 있어도 행 높이가 들쭉날쭉해지지 않는다(`_cell_lines`, 줄바꿈 없으면 기존 282 유지).
+22. **표 편집 전 list-tables로 순번을 확인한다.** 표 순번은 머리말/꼬리말 내부 표를 제외한 문서 순서(표지 레이아웃 표 포함)다. 중첩 표 포함 표는 편집 금지, span 표는 구조 op 금지 — 가드가 거부하면 사용자에게 이유를 설명한다.
 
 ## 상세 참조
 - 양식 규격 전문: `references/kasa-report-style.md`
