@@ -57,6 +57,16 @@ python3 kasa-hwpx/scripts/redraft.py --input 원본.hwpx --map repl.json --outpu
 재기안은 모든 섹션을 처리하고, 키별 치환 건수를 출력하며 미적중 키를 경고합니다.
 미변경 zip 엔트리는 원본 메타데이터 그대로 유지됩니다(서식 보존).
 
+## 테스트
+
+```bash
+python3 -m unittest discover -s tests    # 회귀 테스트(표준 라이브러리 unittest)
+```
+
+빌드 결정성(엔트리 바이트 동일)·KASA 규정 통과·재기안 서식/zip 메타데이터 보존·
+PrvText 본문 반영·검증기 탐지(세로쓰기 오변환/PrvText 미반영)를 잠근다.
+`tests/`는 저장소 전용이며 `.skill` 패키지에는 포함되지 않는다.
+
 ## 스킬 패키징
 
 ```bash
