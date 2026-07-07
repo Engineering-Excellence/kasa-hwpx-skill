@@ -170,7 +170,8 @@ def kasa_check(path):
                for n in section_names)
     if vert:
         notes.append(f"[경고] 세로쓰기(textDirection=\"VERTICAL\") {vert}곳 감지 — "
-                     f"변환 오류 가능성(의도한 세로쓰기인지 확인 필요)")
+                     f"변환 오류 가능성(의도한 세로쓰기인지 확인 필요, "
+                     f"fix_vertical.py로 자동보정 가능)")
     else:
         notes.append("[OK] 세로쓰기 오변환 없음")
 
