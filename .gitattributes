@@ -1,0 +1,18 @@
+# 텍스트 파일은 인덱스에 LF로 정규화(체크아웃 EOL은 플랫폼 설정을 따름).
+# 머신을 바꿔도 인덱스 표현이 동일해 불필요한 diff·CRLF 오염을 막는다.
+* text=auto
+
+*.py   text
+*.md   text
+*.json text
+*.xml  text
+*.txt  text
+
+# 바이너리 명시 — 기준 양식(.hwpx)이 EOL 변환으로 오염되면 치명적이므로
+# git의 자동 감지에 맡기지 않고 못 박는다.
+*.hwpx  binary
+*.skill binary
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.bmp   binary

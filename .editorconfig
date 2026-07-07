@@ -1,0 +1,20 @@
+# 에디터 공통 설정 — 머신/에디터를 바꿔도 인코딩·들여쓰기 일관성 유지
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.md]
+# 마크다운은 줄 끝 공백 2개가 줄바꿈 문법이므로 자르지 않는다
+trim_trailing_whitespace = false
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
