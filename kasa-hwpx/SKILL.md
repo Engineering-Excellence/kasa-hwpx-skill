@@ -30,6 +30,10 @@ kasa-hwpx/
 │   ├── secure_fill.py     # PII 비경유 양식 채우기(detect/fill/verify/shred)
 │   ├── fix_vertical.py    # 세로쓰기 오변환 자동보정(다수결 flip)
 │   └── office/{unpack,pack}.py
+├── hooks/                 # PreToolUse 가드 훅 3종(선택 설치, hooks/README.md)
+│   ├── finalize_guard.py  # 전달 전 validate --kasa 통과 강제
+│   ├── sample_guard.py    # 견본/placeholder 문서 오인 전달 차단
+│   └── spec_guard.py      # 제목·작성정보·발행시기 미확보 시 질문 강제
 ├── assets/kasa-standard-report.hwpx   # 기준 양식(SSOT)
 └── references/
     ├── kasa-report-style.md   # 양식 규격 전문
@@ -179,6 +183,12 @@ python3 scripts/validate.py 결과.hwpx --kasa
 시간 24시각제 쌍점(`14:30`), 4자리 이상 숫자의 천 단위 쉼표(연도 제외),
 항목 기호 □/ㅇ/-/※/* 위계(○·●·■ 등 유사 기호와 ㅇ 항목이 □보다 먼저 나오는 역전 탐지),
 물결표(~) 앞뒤 붙여쓰기. **경고가 나오면 본문 사양의 표기를 고쳐 재생성한다.**
+
+## 가드 훅 (선택 설치 권장)
+`hooks/`의 PreToolUse 훅 3종을 `.claude/settings.json`에 등록하면(방법: `hooks/README.md`)
+(a) 규정 미통과 산출물 전달, (b) 견본·placeholder 문서 오인 전달, (c) 필수 정보
+(제목·작성정보·발행시기) 미확보 생성 실행이 도구 실행 전에 차단된다(exit 2 → Claude가
+사유를 읽고 질문·교정 후 재시도). 훅이 없어도 스킬은 동작한다.
 
 ## Critical Rules
 1. **HWPX만** 지원(`.hwp` 바이너리 미지원).
