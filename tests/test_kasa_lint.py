@@ -65,6 +65,28 @@ class TestRules(unittest.TestCase):
     def test_tilde_spaced(self):
         self._warned("기간: 2026. 7. 1. ~ 15. 운영", "기간")
 
+    def test_tilde_unicode_variant(self):
+        self._warned("기간: 5. 1. ∼ 6. 30.", "기간")  # U+223C도 인식
+
+    def test_time_zero_padding(self):
+        self._warned("행사는 8:9 시작", "시간")
+        self._warned("점검은 9:30 시작", "시간")
+
+    def test_time_padded_ok(self):
+        self.assertEqual(lint_paragraphs(["회의 08:09~14:30 진행"]), [])
+
+    def test_colon_tight(self):
+        self._warned("담당: 원장:김갑동", "쌍점")
+
+    def test_colon_ok(self):
+        self.assertEqual(lint_paragraphs(["원장: 김갑동 (단위: 천원)"]), [])
+
+    def test_weekday_gap(self):
+        self._warned("개최일 2026. 7. 7. (화) 예정", "날짜")
+
+    def test_weekday_attached_ok(self):
+        self.assertEqual(lint_paragraphs(["개최일 2026. 7. 7.(화) 예정"]), [])
+
 
 class TestHwpx(unittest.TestCase):
     @classmethod
