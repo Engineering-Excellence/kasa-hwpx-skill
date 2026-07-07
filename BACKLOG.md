@@ -47,3 +47,4 @@ python3 -m unittest discover -s tests   # 94개 통과 확인 (Python 3.10+, 외
 
 기능 1개 = 커밋 1개(Conventional Commits, 한국어 제목), 회귀 테스트 동반 추가,
 `tests/`는 `.skill` 패키지에 미포함 — 기존 관례를 따른다.
+**관례·안전 원칙·릴리스 절차 전문은 [AGENTS.md](AGENTS.md) 참고**(에이전트 작업 진입점).
