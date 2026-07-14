@@ -1,7 +1,12 @@
-# PreToolUse 가드 훅 3종
+# PreToolUse 가드 훅 3종 (Claude Code 전용 어댑터)
 
 Claude Code가 KASA 보고서 작업 중 저지르기 쉬운 사고를 도구 실행 **전에** 차단한다.
 (참고: jkf87/hwpx-skill의 gyehoek_hook·hwpx_guard_hook·report_placeholder_hook 구성)
+
+> 이 훅들은 Claude Code의 PreToolUse 규약(stdin JSON/exit 2)에 묶인 **플랫폼 어댑터**다.
+> Codex·Gemini 등 다른 플랫폼에서는 등록할 수 없으며, 에이전트가 아래 차단 대상을
+> **수동 게이트**로 스스로 지켜야 한다(AGENTS.md 7장). 스킬의 안전 규칙은 훅 없이도
+> SKILL.md Critical Rules + `validate.py --kasa`만으로 성립한다.
 
 | 훅 | 차단 대상 | 시점 |
 | --- | --- | --- |

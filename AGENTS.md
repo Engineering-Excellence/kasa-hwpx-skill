@@ -83,7 +83,28 @@ python3 -m unittest discover -s tests    # 94개 통과 확인 후 작업 시작
 **주간 자동 관찰:** 클라우드 루틴이 매주 화 09:07(KST) 재관찰해 보고한다(BACKLOG 표 위 안내
 참고) — 에이전트가 수동 재관찰을 중복 수행할 필요 없고, 반영 작업만 사용자 세션에서 한다.
 
-## 7. 하지 말 것
+## 7. 플랫폼 호환 (범용 GenAI 원칙, 2026-07-14 결정)
+
+이 스킬은 특정 AI 플랫폼 전용이 아니다. Claude Code 외에 **Codex CLI·Gemini CLI 등
+AGENTS.md·Agent Skills 개방 표준을 읽는 도구에서 동일하게 동작**해야 한다.
+
+- **코어는 플랫폼 중립.** 스크립트(파이썬 표준 라이브러리 CLI)·`references/`·`tests/`에
+  특정 에이전트 전용 기능을 넣지 않는다. 규칙 전문(SKILL.md)은 순수 마크다운 +
+  Agent Skills 표준 프런트매터(2025-12 공개 표준, Codex·Gemini CLI 등 채택)를 유지한다.
+- **진입점.** Claude Code → `CLAUDE.md`, AGENTS.md 표준 도구(Codex 등) → 이 문서,
+  Gemini CLI → `GEMINI.md`(이 문서로 위임). 플랫폼별 파일은 얇은 포인터로만 두고
+  실내용은 이 문서와 SKILL.md에만 쓴다.
+- **훅은 어댑터.** `hooks/`는 Claude Code 전용(PreToolUse stdin JSON/exit 2 규약)이다.
+  훅이 없는 플랫폼에서는 에이전트가 다음 **수동 게이트**를 스스로 지킨다 —
+  (a) 산출물 전달 전 `validate.py --kasa` 통과, (b) 동봉 견본·placeholder 잔존 문서
+  전달 금지, (c) 제목·작성정보·발행시기 미확보 시 생성 전에 질문.
+- **안전 규칙은 플랫폼 기능에 의존시키지 않는다.** 훅은 이중 방어일 뿐이며, 모든 안전
+  규칙은 문서(SKILL.md Critical Rules)와 `validate.py --kasa`만으로 성립해야 한다.
+- **배포.** `.skill` 패키지는 Claude/Cowork 앱 업로드용 채널이고, CLI 에이전트는
+  저장소 clone 또는 `kasa-hwpx/` 디렉터리를 각 도구의 skills 경로에 복사해 쓴다.
+  버전 단일 출처는 변함없이 SKILL.md 프런트매터다.
+
+## 8. 하지 말 것
 
 - 기준 양식에 없는 스타일 ID 창작·타 양식 ID 혼용 (SKILL.md 규칙 3)
 - 본문 흐름 문단에 `linesegarray` 주입 (규칙 9 — 줄겹침 사고의 원인)
