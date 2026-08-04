@@ -15,6 +15,13 @@
   - 미변경 zip 엔트리는 원본 메타데이터(ZipInfo) 그대로 유지한다.
   - 치환 결과를 키별로 집계하고, 한 번도 적중하지 않은 키는 경고한다.
 
+동시 치환(연쇄 오치환 방지):
+  - 모든 키를 하나의 정규식 alternation으로 컴파일해 **원본 텍스트 기준 1회 스캔**으로
+    치환한다. 앞 규칙의 결과가 뒤 규칙의 입력이 되는 연쇄(도미노) 치환이 생기지 않으므로,
+    시각 순연({"09:00~09:30": "09:30~10:00", "09:30~10:00": "10:00~10:30", ...})처럼
+    새 값이 다른 항목의 기존 값과 겹치는 매핑도 안전하다.
+  - 키가 서로 겹치면 긴 키를 우선 매칭한다("10:00"보다 "10:00~11:00"이 먼저).
+
 사용법:
   python3 redraft.py --input 원본.hwpx --map repl.json --output 결과.hwpx [--mode contains|exact]
   repl.json 예: {"2025년": "2026년", "(부서명)": "우주수송정책과"}
@@ -43,23 +50,47 @@ def _unescape(t):
     return t
 
 
-def _apply_map(plain, replacements, mode, counts):
-    """텍스트 한 조각에 치환 맵을 적용하고 키별 적중 수를 집계한다."""
-    new = plain
-    for find, to in replacements.items():
-        if mode == "exact":
-            if new == find:
-                new = to
-                counts[find] += 1
-        else:  # contains
-            n = new.count(find)
-            if n:
-                new = new.replace(find, to)
-                counts[find] += n
-    return new
+def _compile_rules(replacements):
+    """치환 맵을 (정규식, 매핑)으로 1회 컴파일한다(모든 섹션에서 재사용).
+
+    - 키를 길이 내림차순으로 정렬해 alternation을 만든다 → 겹치는 키는 긴 쪽이 먼저 매칭.
+    - 빈 키는 무한 매칭 위험이 있어 거부한다.
+    - 키와 값이 같은 항목은 치환에서 제외한다(불필요한 변경·집계 방지).
+    - 매칭이 하나도 불가능하면 정규식은 None.
+    """
+    if any(k == "" for k in replacements):
+        raise SystemExit("치환 맵에 빈 문자열 키가 있습니다 — 모든 위치에 매칭되어 "
+                         "문서를 훼손할 수 있으므로 거부합니다(키를 확인하세요).")
+    mapping = {k: v for k, v in replacements.items() if k != v}
+    keys = sorted(mapping, key=len, reverse=True)  # 긴 키 우선 매칭
+    pattern = re.compile("|".join(re.escape(k) for k in keys)) if keys else None
+    return pattern, mapping
 
 
-def _redraft_section(sec, replacements, mode, counts, changed):
+def _apply_rules(plain, rules, mode, counts):
+    """텍스트 한 조각에 규칙을 원본 기준으로 '동시' 적용하고 적중 수를 집계한다.
+    치환 결과는 다시 스캔되지 않으므로 규칙 간 연쇄 치환이 발생하지 않는다."""
+    pattern, mapping = rules
+    if pattern is None:
+        return plain
+    if mode == "exact":
+        # <hp:t> 전체가 키와 정확히 일치할 때만 1회 치환하고 즉시 확정한다
+        # (다른 키를 추가로 적용하지 않는다 — 도미노 차단)
+        to = mapping.get(plain)
+        if to is None:
+            return plain
+        counts[plain] += 1
+        return to
+
+    def _one(m):
+        key = m.group(0)
+        counts[key] += 1
+        return mapping[key]  # 함수형 replacement: 값의 \1·\g<> 등이 그대로 삽입된다
+
+    return pattern.sub(_one, plain)
+
+
+def _redraft_section(sec, rules, mode, counts, changed):
     def _sub_t(m):
         open_tag, inner = m.group(1), m.group(2)
         if "<" in inner:
@@ -74,7 +105,7 @@ def _redraft_section(sec, replacements, mode, counts, changed):
                     out.append(seg)
                     continue
                 plain = _unescape(seg)
-                new = _apply_map(plain, replacements, mode, counts)
+                new = _apply_rules(plain, rules, mode, counts)
                 if new != plain:
                     dirty = True
                 out.append(K.xml_escape(new))
@@ -83,7 +114,7 @@ def _redraft_section(sec, replacements, mode, counts, changed):
                 return open_tag + "".join(out) + "</hp:t>"
             return m.group(0)
         plain = _unescape(inner)
-        new = _apply_map(plain, replacements, mode, counts)
+        new = _apply_rules(plain, rules, mode, counts)
         if new != plain:
             changed[0] += 1
             return open_tag + K.xml_escape(new) + "</hp:t>"
@@ -107,10 +138,11 @@ def redraft(input_path, replacements, output_path, mode="contains"):
 
     changed = [0]
     counts = {k: 0 for k in replacements}
+    rules = _compile_rules(replacements)  # 1회 컴파일 → 전 섹션에서 재사용
     new_parts = {}
     for name in section_names:
         sec = parts[name].decode("utf-8")
-        new_sec = _redraft_section(sec, replacements, mode, counts, changed)
+        new_sec = _redraft_section(sec, rules, mode, counts, changed)
         if new_sec != sec:
             new_parts[name] = new_sec.encode("utf-8")
 
