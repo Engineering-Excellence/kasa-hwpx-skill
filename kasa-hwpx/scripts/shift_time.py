@@ -20,10 +20,20 @@ redraft.py(문자열 매핑)로는 두 가지가 원리적으로 불가능해 �
   - 시각 토큰 외의 문자가 하나라도 바뀌면 오류로 중단한다(구분자·접미 표기 보존).
   - <hp:t> 노드 수 동일성 검증 → linesegarray 제거 → PrvText 갱신 → 구조 검증.
 
+분리 노드 탐지(조용한 누락 → 보이는 경고):
+  사람이 쓴 문서에서는 숫자 일부만 글자 서식이 달라 한 시각이 두 <hp:t>에 걸치는 일이
+  생긴다(실측 사례: '…, 12' + ':30 예정' — charPr 508/509 경계).
+  이 도구는 노드 단위로 패턴을 찾으므로 어느 쪽에도 온전한 시각이 없어 순연되지 않고,
+  드라이런 목록에도 나타나지 않아 사람이 눈으로 볼 때까지 알 수 없었다.
+  → 이웃 노드를 이어붙였을 때 비로소 시각이 성립하는 지점을 찾아 경고한다.
+  자동 병합·자동 수정은 하지 않는다(서식 경계를 코드가 합치면 글자 모양이 바뀐다).
+  적용은 사람이 판단하며, --split-fix-map으로 redraft.py --mode exact용 매핑만 만들어 준다.
+
 사용법:
   python3 shift_time.py --input IN.hwpx --output OUT.hwpx --shift "+2:45" \\
       [--scope SCOPE ...] [--exclude EXCLUDE ...] [--exclude-keyword KW ...] \\
-      [--pad-hour] [--dry-run] [--report report.md] [--yes]
+      [--pad-hour] [--dry-run] [--report report.md] [--yes] \\
+      [--split-fix-map fix.json] [--fail-on-split]
 
   범위 지정 문법(--scope·--exclude 공통, 반복 지정 가능):
     section:0,1,2,6                    섹션 번호
@@ -40,10 +50,11 @@ redraft.py(문자열 매핑)로는 두 가지가 원리적으로 불가능해 �
   순연 없이 표기만 고치려면 `--shift +0m --pad-hour`.
 """
 import argparse
+import json
 import os
 import re
 import sys
-from collections import namedtuple
+from collections import Counter, namedtuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kasa_lib as K  # noqa: E402
@@ -68,8 +79,19 @@ MINUTES_PER_DAY = 24 * 60
 LABEL_LIMIT = 34
 LABEL_LOOKBACK = 40  # 맥락 라벨을 찾아 거슬러 올라갈 최대 노드 수
 
+# 이어붙이면 안 되는 경계 — 두 <hp:t> 사이의 XML에 이것이 있으면 한 시각으로 보지 않는다.
+# (문단·표 셀·줄바꿈은 사람 눈에도 끊겨 보이는 자리다. 실제 사고 사례에서 두 노드 사이에
+#  있던 것은 런 경계(</hp:run><hp:run charPrIDRef="…">)뿐이었고, 그것은 결합 대상이다.)
+_BREAK_RE = re.compile(r"<hp:p[\s/>]|</hp:p>|<hp:tc[\s/>]|</hp:tc>|<hp:lineBreak[\s/>]")
+SPLIT_WINDOW = 4  # 한 번에 이어붙여 볼 최대 노드 수('12' + ':' + '30'까지 포괄)
+
 # 변경 1건 = <hp:t> 노드 1개(그 안의 시각이 모두 옮겨진 상태)
 Change = namedtuple("Change", "section byte_off label old new")
+
+# 분리 1건 = 이어붙여야 시각이 되는 인접 <hp:t> 묶음(순연되지 않은 채 남는다)
+#   pieces     조각별 원문, new_pieces 순연했다면 되었을 조각별 결과(불가능하면 None)
+#   times      이어붙여야 비로소 성립하는 시각 토큰, mixed 컨트롤 태그가 섞인 노드 포함 여부
+Split = namedtuple("Split", "section byte_off pieces new_pieces times mixed")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -289,6 +311,27 @@ def _overlaps(span, ranges):
     return any(span[0] < e and s < span[1] for s, e in ranges)
 
 
+def _applies(span, text, scopes, in_ranges, ex_ranges, keywords):
+    """이 노드가 순연 적용 대상인가 — 순연과 분리 노드 탐지가 같은 판정을 쓴다
+    (대상이 아닌 구간의 분리 시각까지 경고하면 소음이 된다)."""
+    if scopes and not _contained(span, in_ranges):
+        return False
+    if _overlaps(span, ex_ranges):          # 제외가 범위보다 우선
+        return False
+    return not any(k and k in text for k in keywords)
+
+
+def _byte_offsets(sec, nodes):
+    """각 <hp:t> 노드의 원본 바이트 오프셋(--exclude range: 지정에 그대로 쓰는 값)."""
+    offs, cur_char, cur_byte = [], 0, 0
+    for m in nodes:
+        cur_byte += len(sec[cur_char:m.start()].encode("utf-8"))
+        offs.append(cur_byte)
+        cur_byte += len(m.group(0).encode("utf-8"))
+        cur_char = m.end()
+    return offs
+
+
 def _is_context(text):
     """맥락 라벨로 쓸 만한 노드인가 — 시각·기호만 있는 노드는 제외한다."""
     return bool(re.search(r"[가-힣A-Za-z]", TIME_RE.sub(" ", text)))
@@ -332,21 +375,16 @@ def shift_document(parts, minutes, scopes=(), excludes=(), keywords=(),
         if not nodes:
             continue
         texts = [_plain(m.group(2)) for m in nodes]
+        offsets = _byte_offsets(sec, nodes)
         in_ranges = scope_map.get(name, [])
         ex_ranges = exclude_map.get(name, [])
 
         pieces, pos = [], 0        # 새 섹션 조각(변경 노드만 갈아 끼운다)
-        cur_char, cur_byte = 0, 0  # 원본 바이트 오프셋 커서(--exclude range:에 쓸 값)
         for idx, m in enumerate(nodes):
-            cur_byte += len(sec[cur_char:m.start()].encode("utf-8"))
-            node_byte = cur_byte
-            cur_byte += len(m.group(0).encode("utf-8"))
-            cur_char = m.end()
-
+            node_byte = offsets[idx]
             span = (m.start(), m.end())
-            if ((scopes and not _contained(span, in_ranges))
-                    or _overlaps(span, ex_ranges)          # 제외가 범위보다 우선
-                    or any(k and k in texts[idx] for k in keywords)):
+            if not _applies(span, texts[idx], scopes, in_ranges, ex_ranges,
+                            keywords):
                 kept += sum(1 for t in TIME_RE.finditer(texts[idx])
                             if _shift_token(t.group(0), minutes, pad_hour)
                             != t.group(0))
@@ -372,6 +410,160 @@ def shift_document(parts, minutes, scopes=(), excludes=(), keywords=(),
             new_sections[name] = "".join(pieces)
 
     return changes, kept, new_sections
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 분리 노드 시각 탐지 (글자 서식 경계로 쪼개져 순연되지 않는 시각)
+# ──────────────────────────────────────────────────────────────────────────
+def _trim(pieces, matches):
+    """시각에 걸치지 않는 바깥쪽 조각을 떨어낸다. 반환: (첫 인덱스, 끝 인덱스).
+    앞뒤로 잘라내도 매칭은 그대로다 — 경계 조각의 끝 글자가 숫자였다면 TIME_RE의
+    전후방 탐색(?<![\\d:])·(?![\\d:]) 때문에 애초에 매칭되지 않았을 것이기 때문이다."""
+    lo = min(m.start() for m in matches)
+    hi = max(m.end() for m in matches)
+    starts, pos = [], 0
+    for p in pieces:
+        starts.append(pos)
+        pos += len(p)
+    a = next(k for k in range(len(pieces)) if starts[k] + len(pieces[k]) > lo)
+    b = next(k for k in range(len(pieces) - 1, -1, -1) if starts[k] < hi)
+    return a, b
+
+
+def _shift_pieces(pieces, minutes, pad_hour=False):
+    """조각들을 이어붙여 순연한 뒤 원래 경계대로 다시 나눈다(수정 매핑용).
+    경계가 시각 숫자 한가운데인데 자릿수까지 바뀌어 되돌릴 수 없으면 None."""
+    joined = "".join(pieces)
+    posmap = {}          # 원본 문자 위치 → 결과 문자 위치(불가능하면 None)
+    out, opos, npos = [], 0, 0
+    for m in TIME_RE.finditer(joined):
+        for k in range(opos, m.start() + 1):
+            posmap[k] = npos + (k - opos)
+        out.append(joined[opos:m.start()])
+        npos += m.start() - opos
+        old_tok = m.group(0)
+        new_tok = _shift_token(old_tok, minutes, pad_hour)
+        ci, ci2 = old_tok.index(":"), new_tok.index(":")
+        for k in range(len(old_tok) + 1):      # 쌍점을 기준으로 시·분을 각각 맞춘다
+            j = (ci2 - (ci - k)) if k <= ci else (ci2 + (k - ci))
+            posmap[m.start() + k] = npos + j if j >= 0 else None
+        out.append(new_tok)
+        npos += len(new_tok)
+        opos = m.end()
+    for k in range(opos, len(joined) + 1):
+        posmap[k] = npos + (k - opos)
+    out.append(joined[opos:])
+    new_joined = "".join(out)
+
+    new_pieces, prev, at = [], 0, 0
+    for p in pieces:
+        at += len(p)
+        cut = posmap.get(at)
+        if cut is None:
+            return None
+        new_pieces.append(new_joined[prev:cut])
+        prev = cut
+    return new_pieces
+
+
+def find_split_times(parts, minutes, scopes=(), excludes=(), keywords=(),
+                     pad_hour=False):
+    """글자 서식 경계로 <hp:t>가 쪼개져 순연되지 않는 시각을 찾는다.
+
+    판정: 이웃 노드를 이어붙여야 비로소 TIME_RE가 매칭되는 지점(각 노드만 보면
+    시각이 없다). 같은 문단 안에서 최대 SPLIT_WINDOW개까지 슬라이딩 윈도로 본다.
+    _BREAK_RE(문단·표 셀·줄바꿈) 경계는 넘지 않고, 범위·제외·키워드 판정은
+    순연과 동일하게 적용한다. 이미 순연되는 시각(단독 노드)은 대상이 아니다.
+    반환: Split 목록(문서 순서)."""
+    scope_map = parse_scopes(scopes, parts)
+    exclude_map = parse_scopes(excludes, parts)
+    splits = []
+
+    for name in _sections(parts):
+        sec = parts[name].decode("utf-8")
+        nodes = list(_T_RE.finditer(sec))
+        if len(nodes) < 2:
+            continue
+        texts = [_plain(m.group(2)) for m in nodes]
+        offsets = _byte_offsets(sec, nodes)
+        in_ranges = scope_map.get(name, [])
+        ex_ranges = exclude_map.get(name, [])
+        ok = [_applies((m.start(), m.end()), texts[i], scopes, in_ranges,
+                       ex_ranges, keywords) for i, m in enumerate(nodes)]
+
+        i = 0
+        while i < len(nodes) - 1:
+            if not ok[i] or TIME_RE.search(texts[i]):
+                i += 1
+                continue
+            hit = None
+            for j in range(i + 1, min(i + SPLIT_WINDOW, len(nodes))):
+                if _BREAK_RE.search(sec[nodes[j - 1].end():nodes[j].start()]):
+                    break
+                if not ok[j] or TIME_RE.search(texts[j]):
+                    break
+                found = [m for m in TIME_RE.finditer("".join(texts[i:j + 1]))
+                         if _shift_token(m.group(0), minutes, pad_hour)
+                         != m.group(0)]     # 순연 대상이 아닌 숫자쌍(24:00 등)은 제외
+                if found:
+                    hit = (j, found)
+                    break
+            if hit is None:
+                i += 1
+                continue
+            j, found = hit
+            a, b = _trim(texts[i:j + 1], found)
+            lo, hi = i + a, i + b
+            pieces = texts[lo:hi + 1]
+            splits.append(Split(
+                section=name, byte_off=offsets[lo], pieces=pieces,
+                new_pieces=_shift_pieces(pieces, minutes, pad_hour),
+                times=[m.group(0) for m in found],
+                mixed=any("<" in nodes[k].group(2) for k in range(lo, hi + 1))))
+            i = j + 1
+
+    return splits
+
+
+def _node_text_counts(parts):
+    """문서 전체의 <hp:t> 텍스트별 등장 횟수(수정 매핑의 유일성 검사용)."""
+    counts = Counter()
+    for name in _sections(parts):
+        for m in _T_RE.finditer(parts[name].decode("utf-8")):
+            counts[_plain(m.group(2))] += 1
+    return counts
+
+
+def build_fix_map(splits, parts):
+    """분리 노드를 redraft.py --mode exact로 고칠 매핑을 만든다(자동 적용은 하지 않는다).
+    문서 안에서 텍스트가 유일한 단순 노드만 넣는다 — 같은 텍스트의 <hp:t>가 여럿이면
+    exact 치환이 엉뚱한 곳까지 바꾸므로 매핑에서 빼고 '수동 확인 필요'로 알린다.
+    반환: (매핑 dict, 경고 목록)."""
+    counts = _node_text_counts(parts)
+    mapping, problems = {}, []
+    for sp in splits:
+        where = _where(sp)
+        if sp.new_pieces is None:
+            problems.append(f"{where} 조각 경계가 시각 숫자 한가운데라 매핑을 만들 수 "
+                            f"없습니다 — 수동 확인 필요")
+            continue
+        if sp.mixed:
+            problems.append(f"{where} 컨트롤 태그가 섞인 노드(mixed content)라 "
+                            f"exact 치환 대상이 아닙니다 — 수동 확인 필요")
+            continue
+        dup = [p for p in sp.pieces if counts[p] > 1]
+        if dup:
+            problems.append(f"{where} 같은 텍스트의 <hp:t>가 문서에 여러 개입니다"
+                            f"({', '.join(repr(d) for d in dup)}) — 수동 확인 필요")
+            continue
+        pairs = [(o, n) for o, n in zip(sp.pieces, sp.new_pieces) if o != n]
+        clash = [o for o, n in pairs if mapping.get(o, n) != n]
+        if clash:
+            problems.append(f"{where} 앞선 항목과 같은 키에 다른 값이 필요합니다"
+                            f"({', '.join(repr(c) for c in clash)}) — 수동 확인 필요")
+            continue
+        mapping.update(pairs)
+    return mapping, problems
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -438,8 +630,35 @@ def render_rows(changes):
     return "\n".join(out)
 
 
+def render_splits(splits):
+    """분리 노드 경고 블록 — 드라이런·실제 실행이 같은 문면을 쓴다."""
+    lines = [f"⚠ 분리 노드로 인해 순연되지 않은 시각 {len(splits)}건 — "
+             f"글자 서식 경계로 쪼개져 있어 자동 인식되지 않습니다."]
+    for sp in splits:
+        pieces = " + ".join(f"'{_cell(p)}'" for p in sp.pieces)
+        lines.append(f"  {_where(sp)}  {pieces}  → {', '.join(sp.times)}")
+    lines.append("  ※ redraft.py로 수동 치환하거나, 원본에서 해당 부분의 글자 서식을 "
+                 "통일한 뒤 다시 실행하세요.")
+    return "\n".join(lines)
+
+
+def _split_section(splits):
+    """신구대조표의 「순연되지 않은 분리 노드 시각」 절(검토자가 누락을 알아채는 자리)."""
+    lines = ["## 순연되지 않은 분리 노드 시각", ""]
+    if not splits:
+        return lines + ["해당 없음 — 글자 서식 경계로 쪼개진 시각은 발견되지 않았다.", ""]
+    lines += [f"글자 서식(charPr) 경계로 <hp:t>가 쪼개져 자동 인식되지 않은 시각 "
+              f"{len(splits)}건이다. **순연되지 않았으므로 수동 확인이 필요하다.**", "",
+              "| 구간 | 조각 | 시각 |", "| --- | --- | --- |"]
+    for sp in splits:
+        pieces = " + ".join(f"`{_cell(p)}`" for p in sp.pieces)
+        lines.append(f"| {_where(sp)} | {pieces} | {', '.join(sp.times)} |")
+    return lines + ["", "※ redraft.py --mode exact로 수동 치환하거나, 원본에서 해당 "
+                    "부분의 글자 서식을 통일한 뒤 다시 실행한다.", ""]
+
+
 def render_report(changes, kept, minutes, input_path, scopes, excludes, keywords,
-                  pad_hour=False):
+                  pad_hour=False, splits=()):
     """신구대조표(Markdown) — 드라이런과 같은 변경 목록을 표로 낸다."""
     lines = [
         "# 시각 순연 신구대조표", "",
@@ -458,6 +677,7 @@ def render_report(changes, kept, minutes, input_path, scopes, excludes, keywords
         lines.append(f"| {_where(c)} | {_cell(c.label)} | "
                      f"{_cell(c.old)} | {_cell(c.new)} |")
     lines.append("")
+    lines += _split_section(list(splits))
     return "\n".join(lines)
 
 
@@ -509,6 +729,24 @@ def shift_file(input_path, output_path, minutes, scopes=(), excludes=(),
     return changes, kept
 
 
+def _emit_fix_map(splits, parts, path):
+    """--split-fix-map 처리 — 매핑 파일을 쓰고 제외 항목을 알린다(자동 적용은 없다).
+    path가 없으면 아무 것도 하지 않는다. 반환: 만들어진 매핑."""
+    if not path:
+        return {}
+    mapping, problems = build_fix_map(splits, parts)
+    for p in problems:
+        print(f"  [주의] {p}")
+    if not mapping:
+        print("  수정 매핑: 만들 수 있는 항목이 없습니다(위 주의 참고).")
+        return {}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(mapping, f, ensure_ascii=False, indent=2)
+    print(f"  수정 매핑: {path} ({len(mapping)}건) — redraft.py --mode exact로 "
+          f"적용한 뒤 validate.py --kasa로 다시 검증하세요.")
+    return mapping
+
+
 def fix_negative_shift(argv):
     """'--shift -1:00'을 '--shift=-1:00'으로 바꾼다.
     argparse는 '-'로 시작하는 값을 옵션으로 오인하는데(음수 '숫자'만 예외라
@@ -552,6 +790,11 @@ def main():
                          "(9:20 → 09:20, KASA 표기법). 표기만 고치려면 --shift +0m")
     ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 변경 예정만 출력")
     ap.add_argument("--report", help="신구대조표(Markdown) 저장 경로")
+    ap.add_argument("--split-fix-map",
+                    help="분리 노드 수정 매핑(JSON) 저장 경로 — "
+                         "redraft.py --mode exact에 그대로 넣는다(자동 적용 없음)")
+    ap.add_argument("--fail-on-split", action="store_true",
+                    help="분리 노드 시각이 있으면 파일을 쓰지 않고 중단(CI용)")
     ap.add_argument("--yes", action="store_true", help="전역 순연(범위 미지정) 확인")
     args = ap.parse_args(fix_negative_shift(sys.argv[1:]))
 
@@ -565,6 +808,17 @@ def main():
         print("[경고] --scope 미지정 — 문서 전체에 적용합니다. 보존해야 할 구간"
               "(외부 교통편·셔틀 운행표 등)에 같은 시각 문자열이 있으면 함께 옮겨집니다.")
 
+    # 분리 노드 탐지는 순연보다 먼저 — --fail-on-split이면 파일을 쓰기 전에 멈춘다
+    parts, _ = K.read_package(args.input)
+    splits = find_split_times(parts, minutes, scopes=args.scope,
+                              excludes=args.exclude, keywords=keywords,
+                              pad_hour=args.pad_hour)
+    if splits and args.fail_on_split:
+        print(render_splits(splits))
+        _emit_fix_map(splits, parts, args.split_fix_map)  # 중단해도 매핑은 남긴다
+        raise SystemExit("[중단] --fail-on-split — 분리 노드 시각이 있어 "
+                         "파일을 쓰지 않았습니다.")
+
     changes, kept = shift_file(args.input, args.output, minutes,
                                scopes=args.scope, excludes=args.exclude,
                                keywords=keywords, pad_hour=args.pad_hour,
@@ -577,11 +831,18 @@ def main():
     print(f"이동량   : {format_shift(minutes)} ({minutes:+d}분){pad_txt}")
     print(f"변경 {len(changes)}건 / 보존(제외) {kept}건")
 
+    if splits:  # 변경 목록과 별도 블록 — 드라이런·실제 실행 모두에서 낸다
+        print()
+        print(render_splits(splits))
+        _emit_fix_map(splits, parts, args.split_fix_map)
+    elif args.split_fix_map:
+        print("분리 노드 시각이 없어 수정 매핑을 만들지 않았습니다.")
+
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(render_report(changes, kept, minutes, args.input,
                                   args.scope, args.exclude, keywords,
-                                  pad_hour=args.pad_hour))
+                                  pad_hour=args.pad_hour, splits=splits))
         print(f"신구대조표: {args.report}")
 
     if not args.pad_hour and any(_short_hour(c.new) for c in changes):

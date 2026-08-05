@@ -12,4 +12,4 @@
 - 이 저장소의 가드 훅(`kasa-hwpx/hooks/`)을 이 프로젝트의 `.claude/settings.json`에 등록해 두면
   견본 오전달·미검증 산출물 전달을 도구 실행 전에 차단할 수 있다(등록법: `kasa-hwpx/hooks/README.md`).
 - 작업을 이어받을 때의 순서: `BACKLOG.md`(잔여 작업) → `git log --oneline -10`(최근 흐름) →
-  `python -m unittest discover -s tests`(94개 통과 확인) → 착수.
+  `python -m unittest discover -s tests`(171개 통과 확인) → 착수.

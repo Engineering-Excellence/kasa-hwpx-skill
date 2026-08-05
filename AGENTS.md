@@ -36,7 +36,7 @@
 ```bash
 git clone https://github.com/Engineering-Excellence/kasa-hwpx-skill.git
 cd kasa-hwpx-skill
-python3 -m unittest discover -s tests    # 94개 통과 확인 후 작업 시작
+python3 -m unittest discover -s tests    # 171개 통과 확인 후 작업 시작
 ```
 
 - **Python 3.10+, 외부 의존성 없음**(표준 라이브러리만). `python-hwpx`·`lxml` 등을 설치하지 않는다.
