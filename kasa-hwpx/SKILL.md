@@ -193,7 +193,7 @@ python3 scripts/shift_time.py --input 계획.hwpx --output 계획_순연.hwpx --
 ```
 - `--shift`: `+2:45` `-1:00` `+165m` `-90m`(부호 필수).
 - 범위 문법(`--scope`·`--exclude` 공통, 반복 지정): `section:0,1` / `range:section2:78309-109220`
-  / `table:N`(**0-base** — `hwpx_edit.py list-tables`는 1-base이니 1을 뺀다) /
+  / `table:N`(**1-base** — `hwpx_edit.py list-tables` 순번 그대로, 규칙 22와 동일 기준) /
   `after:"앵커"` / `between:"A".."B"`. **`--exclude`가 `--scope`보다 우선**한다.
 - 드라이런의 `구간` 열(`section0@25293`)은 노드의 **바이트 오프셋**이라 그대로
   `--exclude range:section0:25293-25400` 형태로 옮겨 쓸 수 있다.

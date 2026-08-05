@@ -182,12 +182,23 @@ class TestShiftTime(unittest.TestCase):
     def test_scope_forms_resolve(self):
         parts, _ = K.read_package(self.src)
         self.assertTrue(S.parse_scope("section:0", parts))
-        self.assertTrue(S.parse_scope("table:0", parts))
         self.assertTrue(S.parse_scope('after:"교통편 안내"', parts))
         self.assertTrue(S.parse_scope("range:section0:100-2000", parts))
         for bad in ("section:99", 'after:"없는앵커"', "nope:1", "table:999"):
             with self.assertRaises(SystemExit):
                 S.parse_scope(bad, parts)
+
+    def test_table_scope_is_one_based(self):
+        """표 순번은 hwpx_edit.py list-tables와 같은 1-base다(규칙 22와 동일 기준)."""
+        import hwpx_edit as HE
+        parts, _ = K.read_package(self.src)
+        tables = HE._doc_tables(parts)
+        self.assertEqual(S.parse_scope("table:1", parts), [tables[0]])
+        self.assertEqual(S.parse_scope(f"table:{len(tables)}", parts), [tables[-1]])
+        with self.assertRaises(SystemExit):      # 0은 없는 순번
+            S.parse_scope("table:0", parts)
+        with self.assertRaises(SystemExit):
+            S.parse_scope(f"table:{len(tables) + 1}", parts)
 
 
 if __name__ == "__main__":

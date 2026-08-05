@@ -28,7 +28,7 @@ redraft.py(문자열 매핑)로는 두 가지가 원리적으로 불가능해 �
   범위 지정 문법(--scope·--exclude 공통, 반복 지정 가능):
     section:0,1,2,6                    섹션 번호
     range:section2:78309-109220        섹션 내 바이트 오프셋 구간
-    table:N                            문서 내 N번째 표(0-base, 머리말·꼬리말 표 제외)
+    table:N                            문서 내 N번째 표(1-base — list-tables 순번과 동일)
     after:"앵커"                        앵커 등장 지점부터 문서 끝까지
     between:"앵커A".."앵커B"             앵커A 시작부터 앵커B 끝까지
 
@@ -223,12 +223,12 @@ def parse_scope(spec, parts):
     m = re.fullmatch(r"table:\s*(\d+)", spec)
     if m:
         tables = HE._doc_tables(parts)  # 머리말·꼬리말 내부 표 제외
-        idx = int(m.group(1))
-        if not 0 <= idx < len(tables):
-            raise SystemExit(f"표 #{idx}을 찾을 수 없습니다(0-base, 문서 내 표 "
-                             f"{len(tables)}개 — hwpx_edit.py list-tables는 1-base이니 "
-                             f"순번에서 1을 빼 지정하세요).")
-        name, s, e = tables[idx]
+        idx = int(m.group(1))           # 1-base — hwpx_edit.py list-tables 출력과 동일
+        if not 1 <= idx <= len(tables):
+            raise SystemExit(f"표 #{idx}을 찾을 수 없습니다(1-base, 문서 내 표 "
+                             f"{len(tables)}개 — hwpx_edit.py list-tables로 "
+                             f"순번을 확인하세요).")
+        name, s, e = tables[idx - 1]
         return [(name, s, e)]
 
     m = re.fullmatch(r"after:\s*(.+)", spec, re.S)
@@ -494,8 +494,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="시각 일괄 순연(범위 지정·드라이런·신구대조표)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="범위 문법: section:0,1 / range:section2:1000-2000 / table:0(0-base) / "
-               "after:\"앵커\" / between:\"A\"..\"B\"")
+        epilog="범위 문법: section:0,1 / range:section2:1000-2000 / table:1(1-base, "
+               "hwpx_edit.py list-tables 순번) / after:\"앵커\" / between:\"A\"..\"B\"")
     ap.add_argument("--input", required=True, help="원본 HWPX 경로")
     ap.add_argument("--output", help="결과 HWPX 경로(--dry-run이면 생략 가능)")
     ap.add_argument("--shift", required=True, help="이동량: +2:45, -1:00, +165m, -90m")
