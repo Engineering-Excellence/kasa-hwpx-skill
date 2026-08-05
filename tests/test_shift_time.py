@@ -51,7 +51,8 @@ class TestShiftTime(unittest.TestCase):
         """순연 실행 → (결과 경로, 본문 텍스트, changes, kept)."""
         out = os.path.join(self.tmp.name, name)
         kw.setdefault("keywords", ())  # 키워드 제외는 해당 테스트에서만 켠다
-        changes, kept = S.shift_file(self.src, out, S.parse_shift(shift), **kw)
+        minutes = S.parse_shift(shift, allow_zero=kw.get("pad_hour", False))
+        changes, kept = S.shift_file(self.src, out, minutes, **kw)
         return out, K.extract_text(out), changes, kept
 
     # 1. 자릿수·구분자 보존
@@ -134,7 +135,7 @@ class TestShiftTime(unittest.TestCase):
         # 검산 실패 시 파일을 쓰지 않는다(전건 검증 → 중단)
         out = os.path.join(self.tmp.name, "never.hwpx")
         real = S.verify_changes
-        S.verify_changes = lambda changes, minutes: ["강제 실패"]
+        S.verify_changes = lambda *a, **kw: ["강제 실패"]
         try:
             with self.assertRaises(SystemExit):
                 S.shift_file(self.src, out, 165, keywords=())
@@ -169,6 +170,59 @@ class TestShiftTime(unittest.TestCase):
             self.assertIn(S._cell(c.new), rows)
             self.assertIn(f"| {S._where(c)} |", report)
         self.assertEqual(len(re.findall(r"^\| section", report, re.M)), len(changes))
+
+    # --pad-hour: KASA 표기법(시 두 자리) 교정을 적용 범위 안에서만 함께 수행
+    def test_pad_hour_normalizes_within_scope_only(self):
+        _, text, _, _ = self._run("-2:00", "pad1.hwpx", pad_hour=True,
+                                  scopes=[SCHEDULE_SCOPE])
+        self.assertIn("집결 07:20~08:00", text)   # 9:20 → 07:20 (한 자리 시 교정)
+        self.assertIn("5:08-8:02", text)          # 범위 밖 교통편 표기는 그대로
+
+    def test_pad_hour_only_without_shift(self):
+        # 순연 없이 표기만 교정(+0m) — 자릿수 외 문자는 그대로여야 한다
+        _, text, changes, _ = self._run("+0m", "pad2.hwpx", pad_hour=True,
+                                        scopes=[SCHEDULE_SCOPE])
+        self.assertIn("집결 09:20~10:00", text)
+        self.assertIn("브리핑 12:30 시작", text)  # 이미 두 자리면 무변경
+        self.assertIn("5:08-8:02", text)          # 범위 밖 무변경
+        self.assertTrue(changes)
+
+    def test_pad_hour_leaves_non_time_pairs(self):
+        _, text, _, _ = self._run("+0m", "pad3.hwpx", pad_hour=True)
+        self.assertIn("비율 24:00", text)         # 시각이 아닌 숫자쌍은 교정 대상 아님
+        self.assertIn("L+2h36m", text)
+
+    def test_pad_hour_clears_lint_warning(self):
+        """교정 후 kasa_lint의 '두 자리' 경고가 사라진다(규칙과 실제로 맞물리는지)."""
+        import kasa_lint as L
+        out, _, _, _ = self._run("+0m", "pad4.hwpx", pad_hour=True)
+        parts, _ = K.read_package(out)
+        warns = L.lint_paragraphs(L.paragraphs_from_parts(parts))
+        self.assertFalse([w for w in warns if "두 자리로" in w])
+
+    def test_verification_accounts_for_pad_hour(self):
+        ch = [S.Change("Contents/section0.xml", 100, "집결", "9:20", "09:20")]
+        self.assertEqual(S.verify_changes(ch, 0, pad_hour=True), [])
+        self.assertTrue(S.verify_changes(ch, 0))          # 교정 없이는 자릿수 불일치
+        bad = [S.Change("Contents/section0.xml", 100, "집결", "9:20", "9:20")]
+        self.assertTrue(S.verify_changes(bad, 0, pad_hour=True))
+
+    def test_negative_shift_survives_argparse(self):
+        """'--shift -1:00'은 argparse가 옵션으로 오인하므로 =형태로 흡수한다."""
+        self.assertEqual(S.fix_negative_shift(["--shift", "-1:00", "--dry-run"]),
+                         ["--shift=-1:00", "--dry-run"])
+        self.assertEqual(S.fix_negative_shift(["--shift", "-90m"]),
+                         ["--shift=-90m"])
+        # 양수·=형태·다른 옵션은 건드리지 않는다
+        self.assertEqual(S.fix_negative_shift(["--shift", "+2:45", "--yes"]),
+                         ["--shift", "+2:45", "--yes"])
+        self.assertEqual(S.fix_negative_shift(["--scope", "section:0"]),
+                         ["--scope", "section:0"])
+
+    def test_zero_shift_requires_pad_hour(self):
+        self.assertEqual(S.parse_shift("+0m", allow_zero=True), 0)
+        with self.assertRaises(SystemExit):   # 옮길 것도 고칠 것도 없는 실행은 거부
+            S.parse_shift("+0m")
 
     def test_parse_shift_forms(self):
         self.assertEqual(S.parse_shift("+2:45"), 165)

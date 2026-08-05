@@ -23,7 +23,7 @@ redraft.py(문자열 매핑)로는 두 가지가 원리적으로 불가능해 �
 사용법:
   python3 shift_time.py --input IN.hwpx --output OUT.hwpx --shift "+2:45" \\
       [--scope SCOPE ...] [--exclude EXCLUDE ...] [--exclude-keyword KW ...] \\
-      [--dry-run] [--report report.md] [--yes]
+      [--pad-hour] [--dry-run] [--report report.md] [--yes]
 
   범위 지정 문법(--scope·--exclude 공통, 반복 지정 가능):
     section:0,1,2,6                    섹션 번호
@@ -33,6 +33,11 @@ redraft.py(문자열 매핑)로는 두 가지가 원리적으로 불가능해 �
     between:"앵커A".."앵커B"             앵커A 시작부터 앵커B 끝까지
 
   권장 절차: --dry-run으로 확인 → 범위·제외 확정 → 실행 → --report 대조표 검토
+
+  --pad-hour: 한 자리 시(9:20)를 두 자리(09:20)로 함께 교정한다(KASA 표기법 —
+  kasa_lint의 '시·분 두 자리' 규칙). 기본은 꺼져 있다(요청하지 않은 표기 변경 금지).
+  교정도 **적용 범위 안에서만** 일어나므로 제외한 교통편·셔틀 시간표의 표기는 그대로다.
+  순연 없이 표기만 고치려면 `--shift +0m --pad-hour`.
 """
 import argparse
 import os
@@ -70,8 +75,9 @@ Change = namedtuple("Change", "section byte_off label old new")
 # ──────────────────────────────────────────────────────────────────────────
 # 시각 연산 (순수 함수 — 파일·문서 상태와 무관)
 # ──────────────────────────────────────────────────────────────────────────
-def parse_shift(text):
-    """'+2:45' '-1:00' '+165m' '-90m' → 분(int). 부호는 필수."""
+def parse_shift(text, allow_zero=False):
+    """'+2:45' '-1:00' '+165m' '-90m' → 분(int). 부호는 필수.
+    allow_zero는 표기 교정(--pad-hour)만 하려는 경우를 위한 것이다(+0m)."""
     s = text.strip()
     m = re.fullmatch(r"([+-])(?:(\d{1,3}):(\d{1,2})|(\d{1,5})m)", s)
     if not m:
@@ -84,8 +90,9 @@ def parse_shift(text):
         minutes = int(m.group(2)) * 60 + int(m.group(3))
     else:
         minutes = int(m.group(4))
-    if minutes == 0:
-        raise SystemExit("--shift가 0분입니다(옮길 것이 없습니다).")
+    if minutes == 0 and not allow_zero:
+        raise SystemExit("--shift가 0분입니다(옮길 것이 없습니다). "
+                         "표기 교정만 하려면 --pad-hour와 함께 쓰세요.")
     return sign * minutes
 
 
@@ -96,25 +103,30 @@ def format_shift(minutes):
     return f"{sign}{h}:{m:02d}"
 
 
-def _shift_token(tok, minutes):
+def _hour_str(nh, src_hour, pad_hour):
+    """시(hour) 표기 규칙 — 기본은 원본 자릿수 유지, pad_hour면 두 자리로 채운다."""
+    return f"{nh:02d}" if (pad_hour or len(src_hour) == 2) else str(nh)
+
+
+def _shift_token(tok, minutes, pad_hour=False):
     """시각 토큰 1개를 옮긴다. 자릿수 표기(9:20 vs 09:20)를 원본대로 유지하고,
-    자정을 넘으면 24시간 순환(mod 1440)한다. 시각이 아니면 원본 그대로 둔다."""
+    자정을 넘으면 24시간 순환(mod 1440)한다. 시각이 아니면 원본 그대로 둔다.
+    pad_hour면 한 자리 시를 두 자리로 채운다(KASA 표기법 — kasa_lint 규칙)."""
     m = TIME_RE.fullmatch(tok)
     if not m:
         return tok
     h, mi = int(m.group(1)), int(m.group(2))
-    if h > 23 or mi > 59:  # 24:00 이상·H:60 이상은 시각이 아님(비율·점수 등)
+    if h > 23 or mi > 59:  # 24:00 이상·H:60 이상은 시각이 아님(비율·점수 등) → 교정도 안 함
         return tok
     total = (h * 60 + mi + minutes) % MINUTES_PER_DAY
     nh, nm = divmod(total, 60)
-    hour = f"{nh:02d}" if len(m.group(1)) == 2 else str(nh)
-    return f"{hour}:{nm:02d}"
+    return f"{_hour_str(nh, m.group(1), pad_hour)}:{nm:02d}"
 
 
-def shift_text(text, minutes):
+def shift_text(text, minutes, pad_hour=False):
     """텍스트 안의 시각 토큰만 옮긴다. 구분자(~ - ∼)·접미(분·경·까지·부터)는
     토큰 밖이라 손대지 않는다."""
-    return TIME_RE.sub(lambda m: _shift_token(m.group(0), minutes), text)
+    return TIME_RE.sub(lambda m: _shift_token(m.group(0), minutes, pad_hour), text)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -305,7 +317,8 @@ def _label_for(texts, idx):
     return own or "-"
 
 
-def shift_document(parts, minutes, scopes=(), excludes=(), keywords=()):
+def shift_document(parts, minutes, scopes=(), excludes=(), keywords=(),
+                   pad_hour=False):
     """문서 전체의 변경 계획을 세운다(파일은 쓰지 않는다).
     반환: (changes, kept, new_sections{섹션명: 새 XML 문자열}).
     kept는 범위·제외·키워드 때문에 옮기지 않은 시각 토큰 수."""
@@ -335,14 +348,15 @@ def shift_document(parts, minutes, scopes=(), excludes=(), keywords=()):
                     or _overlaps(span, ex_ranges)          # 제외가 범위보다 우선
                     or any(k and k in texts[idx] for k in keywords)):
                 kept += sum(1 for t in TIME_RE.finditer(texts[idx])
-                            if _shift_token(t.group(0), minutes) != t.group(0))
+                            if _shift_token(t.group(0), minutes, pad_hour)
+                            != t.group(0))
                 continue
 
             inner = m.group(2)
             # 시각 토큰은 XML 이스케이프 대상 문자를 포함하지 않으므로 원본 문자열을
             # 그대로 치환한다(이스케이프 왕복으로 인한 변형 방지). 태그는 손대지 않는다.
             new_inner = "".join(
-                seg if seg.startswith("<") else shift_text(seg, minutes)
+                seg if seg.startswith("<") else shift_text(seg, minutes, pad_hour)
                 for seg in _TAG_SPLIT_RE.split(inner))
             if new_inner == inner:
                 continue
@@ -363,7 +377,7 @@ def shift_document(parts, minutes, scopes=(), excludes=(), keywords=()):
 # ──────────────────────────────────────────────────────────────────────────
 # 자기 검산
 # ──────────────────────────────────────────────────────────────────────────
-def verify_changes(changes, minutes):
+def verify_changes(changes, minutes, pad_hour=False):
     """변경 전건을 재계산으로 검증한다. 문제 목록(빈 목록이면 통과)을 반환.
     검사 두 가지:
       (a) 시각 토큰 외의 문자가 하나도 바뀌지 않았는가(구분자·접미·본문 보존)
@@ -386,8 +400,7 @@ def verify_changes(changes, minutes):
             else:
                 total = (h * 60 + mi + minutes) % MINUTES_PER_DAY
                 nh, nm = divmod(total, 60)
-                hour = f"{nh:02d}" if len(om.group(1)) == 2 else str(nh)
-                expect = f"{hour}:{nm:02d}"
+                expect = f"{_hour_str(nh, om.group(1), pad_hour)}:{nm:02d}"
             if n != expect:
                 problems.append(f"검산 불일치: {o} {format_shift(minutes)} → "
                                 f"{n} (기대 {expect}) / 노드 {ch.old!r}")
@@ -397,6 +410,12 @@ def verify_changes(changes, minutes):
 # ──────────────────────────────────────────────────────────────────────────
 # 보고(드라이런·신구대조표)
 # ──────────────────────────────────────────────────────────────────────────
+def _short_hour(text):
+    """결과에 한 자리 시가 남아 있는가(kasa_lint '두 자리' 경고 대상)."""
+    return any(len(m.group(1)) == 1 and int(m.group(1)) <= 23
+               and int(m.group(2)) <= 59 for m in TIME_RE.finditer(text))
+
+
 def _cell(text):
     return " ".join(str(text).split()).replace("|", "\\|") or "-"
 
@@ -419,12 +438,15 @@ def render_rows(changes):
     return "\n".join(out)
 
 
-def render_report(changes, kept, minutes, input_path, scopes, excludes, keywords):
+def render_report(changes, kept, minutes, input_path, scopes, excludes, keywords,
+                  pad_hour=False):
     """신구대조표(Markdown) — 드라이런과 같은 변경 목록을 표로 낸다."""
     lines = [
         "# 시각 순연 신구대조표", "",
         f"- 원본 파일: `{os.path.basename(input_path)}`",
-        f"- 이동량: {format_shift(minutes)} ({minutes:+d}분)",
+        f"- 이동량: {format_shift(minutes)} ({minutes:+d}분)"
+        + ("  ※ 표기 교정(--pad-hour: 한 자리 시 → 두 자리) 동시 적용"
+           if pad_hour else ""),
         f"- 적용 범위: {', '.join(scopes) if scopes else '문서 전체(범위 미지정)'}",
         f"- 제외 범위: {', '.join(excludes) if excludes else '없음'}",
         f"- 제외 키워드: {', '.join(keywords) if keywords else '없음'}",
@@ -443,7 +465,7 @@ def render_report(changes, kept, minutes, input_path, scopes, excludes, keywords
 # 실행
 # ──────────────────────────────────────────────────────────────────────────
 def shift_file(input_path, output_path, minutes, scopes=(), excludes=(),
-               keywords=DEFAULT_KEYWORDS, dry_run=False):
+               keywords=DEFAULT_KEYWORDS, dry_run=False, pad_hour=False):
     """시각 순연을 수행한다. 반환: (changes, kept).
     dry_run이면 계획만 세우고 파일을 쓰지 않는다."""
     parts, _ = K.read_package(input_path)
@@ -451,9 +473,11 @@ def shift_file(input_path, output_path, minutes, scopes=(), excludes=(),
         raise SystemExit("section*.xml을 찾을 수 없습니다(유효한 HWPX가 아님).")
 
     changes, kept, new_sections = shift_document(
-        parts, minutes, scopes=scopes, excludes=excludes, keywords=keywords)
+        parts, minutes, scopes=scopes, excludes=excludes, keywords=keywords,
+        pad_hour=pad_hour)
 
-    problems = verify_changes(changes, minutes)  # 전건 재계산 — 어긋나면 쓰지 않는다
+    # 전건 재계산 — 어긋나면 쓰지 않는다
+    problems = verify_changes(changes, minutes, pad_hour)
     if problems:
         raise SystemExit("[중단] 자기 검산 실패 — 파일을 쓰지 않았습니다.\n  "
                          + "\n  ".join(problems[:20]))
@@ -485,6 +509,22 @@ def shift_file(input_path, output_path, minutes, scopes=(), excludes=(),
     return changes, kept
 
 
+def fix_negative_shift(argv):
+    """'--shift -1:00'을 '--shift=-1:00'으로 바꾼다.
+    argparse는 '-'로 시작하는 값을 옵션으로 오인하는데(음수 '숫자'만 예외라
+    '-1:00'은 걸린다), 음수 순연은 정상 사용법이라 여기서 흡수한다."""
+    out, i = [], 0
+    while i < len(argv):
+        if (argv[i] == "--shift" and i + 1 < len(argv)
+                and re.fullmatch(r"-\d[\d:m]*", argv[i + 1])):
+            out.append(f"--shift={argv[i + 1]}")
+            i += 2
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -507,12 +547,15 @@ def main():
                     help="해당 문자열이 든 <hp:t>는 보존(보조 수단)")
     ap.add_argument("--no-default-keywords", action="store_true",
                     help=f"기본 제외 키워드({', '.join(DEFAULT_KEYWORDS)}) 해제")
+    ap.add_argument("--pad-hour", action="store_true",
+                    help="적용 범위 안에서 한 자리 시를 두 자리로 교정"
+                         "(9:20 → 09:20, KASA 표기법). 표기만 고치려면 --shift +0m")
     ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 변경 예정만 출력")
     ap.add_argument("--report", help="신구대조표(Markdown) 저장 경로")
     ap.add_argument("--yes", action="store_true", help="전역 순연(범위 미지정) 확인")
-    args = ap.parse_args()
+    args = ap.parse_args(fix_negative_shift(sys.argv[1:]))
 
-    minutes = parse_shift(args.shift)
+    minutes = parse_shift(args.shift, allow_zero=args.pad_hour)
     keywords = list(args.exclude_keyword)
     if not args.no_default_keywords:
         keywords = list(DEFAULT_KEYWORDS) + keywords
@@ -524,20 +567,27 @@ def main():
 
     changes, kept = shift_file(args.input, args.output, minutes,
                                scopes=args.scope, excludes=args.exclude,
-                               keywords=keywords,
+                               keywords=keywords, pad_hour=args.pad_hour,
                                dry_run=args.dry_run or (not args.scope and not args.yes))
 
     scope_txt = ", ".join(args.scope) if args.scope else "문서 전체(범위 미지정)"
     print(f"적용 범위: {scope_txt}")
     print(f"제외 범위: {', '.join(args.exclude) if args.exclude else '없음'}")
-    print(f"이동량   : {format_shift(minutes)} ({minutes:+d}분)")
+    pad_txt = "  (+ 표기 교정: 한 자리 시 → 두 자리)" if args.pad_hour else ""
+    print(f"이동량   : {format_shift(minutes)} ({minutes:+d}분){pad_txt}")
     print(f"변경 {len(changes)}건 / 보존(제외) {kept}건")
 
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(render_report(changes, kept, minutes, args.input,
-                                  args.scope, args.exclude, keywords))
+                                  args.scope, args.exclude, keywords,
+                                  pad_hour=args.pad_hour))
         print(f"신구대조표: {args.report}")
+
+    if not args.pad_hour and any(_short_hour(c.new) for c in changes):
+        print("  ※ 결과에 한 자리 시(예: 9:20)가 남아 있습니다 — "
+              "validate --kasa의 표기법 lint가 '두 자리로'를 경고할 수 있습니다. "
+              "함께 교정하려면 --pad-hour를 붙이세요(적용 범위 안에서만 바뀝니다).")
 
     if not changes:
         print("변경할 시각이 없습니다(범위·제외 지정을 확인하세요).")
