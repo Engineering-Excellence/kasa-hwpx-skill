@@ -173,7 +173,7 @@ PrvText 본문 반영·검증기 탐지(세로쓰기 오변환/PrvText 미반영
 MI 보호)·신구대조(문단/셀 diff)·라벨 양식 채우기·secure-fill(값 비노출)·
 PreToolUse 가드 훅(차단/통과 조건)·office unpack→repack 왕복 바이트 보존·
 재기안 동시 치환(연쇄 오치환 회귀·긴 키 우선·안전 가드)·시각 순연(범위 한정·분리 노드
-제외·자정 넘김·자기 검산)을 잠근다(145케이스).
+제외·자정 넘김·자기 검산·표기 교정)을 잠근다(153케이스).
 `tests/`는 저장소 전용이며 `.skill` 패키지에는 포함되지 않는다.
 
 ## 스킬 패키징
@@ -212,7 +212,7 @@ python3 build_skill.py        # → dist/kasa-hwpx_v{버전}.skill 생성 (버�
 ## 버전 히스토리
 
 커밋은 [Conventional Commits](https://www.conventionalcommits.org), 태그는 [SemVer](https://semver.org)를 따릅니다.
-**현재 버전: `v0.9.0`** (버전의 단일 출처는 `kasa-hwpx/SKILL.md` 프런트매터의 `version` 필드이며,
+**현재 버전: `v0.10.0`** (버전의 단일 출처는 `kasa-hwpx/SKILL.md` 프런트매터의 `version` 필드이며,
 빌드 산출물 이름(`dist/kasa-hwpx_v{버전}.skill`)에 자동 반영됩니다.)
 
 - `v0.1.0` feat: 초기 버전 — 생성 엔진·검증기·기준 양식
@@ -249,7 +249,11 @@ python3 build_skill.py        # → dist/kasa-hwpx_v{버전}.skill 생성 (버�
 - `v0.9.0` feat: 시각 일괄 순연(`shift_time.py`) — 범위 지정(`section`/`range`/`table`/
   `after`/`between`)·제외 우선·드라이런·신구대조표, 자릿수/구분자/접미 보존과 자정 넘김,
   변경 전건 재계산 검산(불일치 시 미기록). 전역 순연은 경고 후 `--yes` 요구,
-  표 순번을 `list-tables`와 같은 1-base로 통일, 회귀 테스트 146케이스 **(현재)**
+  표 순번을 `list-tables`와 같은 1-base로 통일, 회귀 테스트 146케이스
+- `v0.10.0` feat: 시각 순연에 표기 교정 옵션(`--pad-hour`) — KASA 표기법(시 두 자리)을
+  **적용 범위 안에서만** 함께 교정(`9:20`→`09:20`)해 보존 구간의 표기는 건드리지 않는다.
+  기본은 off(요청하지 않은 표기 변경 금지), 순연 없이 교정만 하려면 `--shift "+0m"`.
+  fix: `--shift "-1:00"`을 argparse가 옵션으로 오인하던 문제. 회귀 테스트 153케이스 **(현재)**
 
 ### 커밋 규약
 
