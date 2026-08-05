@@ -45,6 +45,7 @@
         ├── kasa_lint.py      # KASA 표기법 lint(날짜·시간·숫자·기호·위계)
         ├── extract_text.py   # 본문 텍스트 추출(검수용)
         ├── redraft.py        # 재기안: 기존 HWPX 서식 보존 본문 치환
+        ├── shift_time.py     # 시각 일괄 순연(범위 지정·드라이런·신구대조표)
         ├── hwpx_diff.py      # 신구대조: 두 HWPX 문단·표 셀 diff(읽기 전용)
         ├── label_fill.py     # 라벨 기반 양식 채우기("성명:" 옆 빈 셀)
         ├── hwpx_edit.py      # in-place 편집: 머리말·꼬리말·쪽번호·표 구조 op
@@ -84,6 +85,19 @@ python3 kasa-hwpx/scripts/kasa_lint.py 보고서.hwpx --strict   # 표기법만 
 python3 kasa-hwpx/scripts/hwpx_diff.py 구버전.hwpx 신버전.hwpx
 # 통계: 추가 1 · 삭제 0 · 수정 2 · 동일 40  +  [수정] 표 셀(2,1): '88,000' → '92,000' …
 ```
+
+시각 일괄 순연(발사 연기 등 — 자릿수·구분자 보존, 자정 넘김, 범위 한정):
+
+```bash
+# ① 드라이런으로 먼저 확인 → ② 범위·제외 확정 → ③ 실행 → ④ 대조표 검토
+python3 kasa-hwpx/scripts/shift_time.py --input 계획.hwpx --shift "+2:45" \
+    --scope 'between:"행사 일정".."브리핑 종료"' --dry-run
+python3 kasa-hwpx/scripts/shift_time.py --input 계획.hwpx --output 순연.hwpx --shift "+2:45" \
+    --scope 'between:"행사 일정".."브리핑 종료"' --exclude 'after:"교통편 안내"' --report 대조표.md
+```
+
+범위 미지정(문서 전체) 순연은 보존해야 할 교통편·셔틀 시간표까지 밀 수 있어 경고 후
+`--yes`를 요구합니다. 변경 전건은 재계산으로 검산하며, 어긋나면 파일을 쓰지 않습니다.
 
 라벨 기반 양식 채우기(`{{자리표시자}}` 없는 표 양식 — "성명:" 옆 빈 셀 자동 입력):
 
@@ -156,7 +170,8 @@ PrvText 본문 반영·검증기 탐지(세로쓰기 오변환/PrvText 미반영
 표 스타일(정렬 분리·행 높이 동일화)·이미지 삽입/교체/삭제(BinData·manifest·pic 일관성,
 MI 보호)·신구대조(문단/셀 diff)·라벨 양식 채우기·secure-fill(값 비노출)·
 PreToolUse 가드 훅(차단/통과 조건)·office unpack→repack 왕복 바이트 보존·
-재기안 동시 치환(연쇄 오치환 회귀·긴 키 우선·안전 가드)을 잠근다(132케이스).
+재기안 동시 치환(연쇄 오치환 회귀·긴 키 우선·안전 가드)·시각 순연(범위 한정·분리 노드
+제외·자정 넘김·자기 검산)을 잠근다(145케이스).
 `tests/`는 저장소 전용이며 `.skill` 패키지에는 포함되지 않는다.
 
 ## 스킬 패키징
@@ -195,7 +210,7 @@ python3 build_skill.py        # → dist/kasa-hwpx_v{버전}.skill 생성 (버�
 ## 버전 히스토리
 
 커밋은 [Conventional Commits](https://www.conventionalcommits.org), 태그는 [SemVer](https://semver.org)를 따릅니다.
-**현재 버전: `v0.8.2`** (버전의 단일 출처는 `kasa-hwpx/SKILL.md` 프런트매터의 `version` 필드이며,
+**현재 버전: `v0.9.0`** (버전의 단일 출처는 `kasa-hwpx/SKILL.md` 프런트매터의 `version` 필드이며,
 빌드 산출물 이름(`dist/kasa-hwpx_v{버전}.skill`)에 자동 반영됩니다.)
 
 - `v0.1.0` feat: 초기 버전 — 생성 엔진·검증기·기준 양식
@@ -228,7 +243,11 @@ python3 build_skill.py        # → dist/kasa-hwpx_v{버전}.skill 생성 (버�
 - `v0.8.2` fix: 재기안 연쇄 오치환(도미노) 제거 — 치환 맵을 단일 정규식으로 컴파일해
   **원본 기준 동시 적용**(시각 순연처럼 새 값이 다른 키의 기존 값과 겹쳐도 안전),
   긴 키 우선 매칭·적중 수 정확화·안전 가드(빈 키 거부, 동일 규칙 제외, 값의 정규식
-  특수문자 보호), 회귀 테스트 132케이스 **(현재)**
+  특수문자 보호), 회귀 테스트 132케이스
+- `v0.9.0` feat: 시각 일괄 순연(`shift_time.py`) — 범위 지정(`section`/`range`/`table`/
+  `after`/`between`)·제외 우선·드라이런·신구대조표, 자릿수/구분자/접미 보존과 자정 넘김,
+  변경 전건 재계산 검산(불일치 시 미기록). 전역 순연은 경고 후 `--yes` 요구,
+  회귀 테스트 145케이스 **(현재)**
 
 ### 커밋 규약
 
