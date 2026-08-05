@@ -247,7 +247,7 @@ python3 build_skill.py        # → dist/kasa-hwpx_v{버전}.skill 생성 (버�
 - `v0.9.0` feat: 시각 일괄 순연(`shift_time.py`) — 범위 지정(`section`/`range`/`table`/
   `after`/`between`)·제외 우선·드라이런·신구대조표, 자릿수/구분자/접미 보존과 자정 넘김,
   변경 전건 재계산 검산(불일치 시 미기록). 전역 순연은 경고 후 `--yes` 요구,
-  회귀 테스트 145케이스 **(현재)**
+  표 순번을 `list-tables`와 같은 1-base로 통일, 회귀 테스트 146케이스 **(현재)**
 
 ### 커밋 규약
 
